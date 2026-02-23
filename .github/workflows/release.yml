@@ -6,7 +6,7 @@ on:
       - "*"
 
 env:
-  PLUGIN_NAME: canvas-banana
+  PLUGIN_NAME: banana-studio
 
 jobs:
   build:
