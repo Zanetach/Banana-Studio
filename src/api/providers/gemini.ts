@@ -11,7 +11,12 @@ import type {
   GeminiPart,
   GeminiContent,
 } from "../types";
-import { isHttpError, getErrorMessage, requestUrlWithTimeout } from "../utils";
+import {
+  isHttpError,
+  getErrorMessage,
+  createAbortSignalWithTimeout,
+  isAbortError,
+} from "../utils";
 
 export class GeminiProvider {
   private settings: CanvasAISettings;
@@ -116,6 +121,7 @@ export class GeminiProvider {
     contextText?: string,
     aspectRatio?: string,
     resolution?: string,
+    abortSignal?: AbortSignal,
   ): Promise<string> {
     const parts: Array<{
       text?: string;
@@ -170,20 +176,36 @@ export class GeminiProvider {
     const model = this.getImageModel();
     const endpoint = this.getEndpoint(model);
 
-    const requestParams: RequestUrlParam = {
-      url: endpoint,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    };
-
     try {
       const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
       console.debug(
         `Banana Studio: Image generation timeout set to ${timeoutMs / 1000}s`,
       );
-      const response = await requestUrlWithTimeout(requestParams, timeoutMs);
-      const data = response.json as GeminiResponse;
+      const { signal, cleanup } = createAbortSignalWithTimeout(
+        timeoutMs,
+        abortSignal,
+      );
+      let data: GeminiResponse;
+      try {
+        const response = await globalThis.fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+          signal,
+        });
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+        data = (await response.json()) as GeminiResponse;
+      } catch (error: unknown) {
+        if (isAbortError(error)) {
+          throw new DOMException("Image generation aborted", "AbortError");
+        }
+        throw error;
+      } finally {
+        cleanup();
+      }
 
       return this.parseGeminiImageResponse(data);
     } catch (error: unknown) {
@@ -396,11 +418,7 @@ export class GeminiProvider {
       }
 
       const uint8Array = new Uint8Array(arrayBuffer);
-      let binary = "";
-      for (let i = 0; i < uint8Array.length; i++) {
-        binary += String.fromCharCode(uint8Array[i]);
-      }
-      const base64Data = window.btoa(binary);
+      const base64Data = this.encodeBytesToBase64(uint8Array);
 
       console.debug(
         "Banana Studio: Fetched image, mimeType:",
@@ -412,6 +430,17 @@ export class GeminiProvider {
     } catch (error: unknown) {
       throw new Error(`Failed to fetch image: ${getErrorMessage(error)}`);
     }
+  }
+
+  private encodeBytesToBase64(bytes: Uint8Array): string {
+    if (bytes.length === 0) return "";
+    const chunkSize = 0x8000;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      parts.push(String.fromCharCode(...chunk));
+    }
+    return window.btoa(parts.join(""));
   }
 
   private handleError(error: unknown): never {

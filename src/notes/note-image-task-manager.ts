@@ -144,6 +144,7 @@ export class NoteImageTaskManager {
         contextText,
         imageOptions.aspectRatio,
         imageOptions.resolution,
+        task.abortController.signal,
       );
 
       clearTimeout(task.timeoutId);

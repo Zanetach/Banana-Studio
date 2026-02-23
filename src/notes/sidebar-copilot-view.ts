@@ -51,6 +51,11 @@ interface GenerationQueueTask {
   inputImages: SidebarInputImage[];
 }
 
+interface CurrentNoteInjectionResult {
+  prompt: string;
+  replaced: boolean;
+}
+
 interface NoteImageOption {
   path: string;
   fileName: string;
@@ -382,6 +387,16 @@ class PresetEditorModal extends Modal {
 
 export class SideBarCoPilotView extends ItemView {
   private readonly referencePromptPrefix = "[参考图] ";
+  private readonly pptAutoMarker = "[PPT_AUTO]";
+  private readonly pptAutoLegacyMarker = "[PPT_AUTO_8]";
+  private readonly currentNotePlaceholderTokens = [
+    "@current_note",
+    "{{current_note}}",
+    "@当前笔记",
+  ];
+  private readonly currentNoteShortcutPattern =
+    /(^|[\s,，。；;])@(?=$|[\s,，。；;])/g;
+  private readonly currentNoteTokenPattern = /@current_note(?:\([^)]+\))?/g;
 
   private plugin: CanvasAIPlugin;
 
@@ -432,6 +447,11 @@ export class SideBarCoPilotView extends ItemView {
   private discardedCandidateSlots: Set<string> = new Set();
   private candidateCleanupTimer: number | null = null;
   private readonly candidateTtlMs = 24 * 60 * 60 * 1000;
+  private candidateRenderRaf: number | null = null;
+  private candidateViewportKey: string = "";
+  private readonly candidateGridMinWidth = 120;
+  private readonly candidateGridGap = 8;
+  private readonly candidateVirtualOverscanRows = 2;
 
   private capturedContext: NotesSelectionContext | null = null;
   private isImageToImageEnabled: boolean = false;
@@ -481,6 +501,10 @@ export class SideBarCoPilotView extends ItemView {
       window.clearTimeout(this.promptSaveTimer);
       this.promptSaveTimer = null;
     }
+    if (this.candidateRenderRaf !== null) {
+      window.cancelAnimationFrame(this.candidateRenderRaf);
+      this.candidateRenderRaf = null;
+    }
     this.setReferencePreviewObjectUrl(null);
   }
 
@@ -525,6 +549,12 @@ export class SideBarCoPilotView extends ItemView {
     this.candidateListEl = this.candidateContainer.createDiv(
       "sidebar-image-candidates-list",
     );
+    this.registerDomEvent(this.candidateListEl, "scroll", () => {
+      this.scheduleCandidateListRender();
+    });
+    this.registerDomEvent(window, "resize", () => {
+      this.scheduleCandidateListRender();
+    });
 
     const footer = container.createDiv(
       "canvas-ai-palette-footer sidebar-studio-layout",
@@ -663,8 +693,8 @@ export class SideBarCoPilotView extends ItemView {
     hintWrap.createDiv({
       cls: "sidebar-hint-tooltip",
       text: this.tr(
-        "输入需求后点击生成；从候选图中选择并插入到笔记。",
-        "Enter prompt and click Generate; then choose a candidate and insert into note.",
+        "输入需求后点击生成；从候选图中选择并插入到笔记。可用 @current_note 自动引用当前笔记内容。",
+        "Enter prompt and click Generate; then choose a candidate and insert into note. Use @current_note to inject current note context.",
       ),
     });
 
@@ -713,8 +743,8 @@ export class SideBarCoPilotView extends ItemView {
       cls: "canvas-ai-prompt-input sidebar-horizontal-input",
       attr: {
         placeholder: this.tr(
-          "输入你要生成的图片描述（可结合预设）",
-          "Describe the image you want to generate (optional with preset)",
+          "输入你要生成的图片描述（可结合预设，支持 @current_note）",
+          "Describe the image you want to generate (optional with preset, supports @current_note)",
         ),
         rows: "3",
       },
@@ -753,10 +783,12 @@ export class SideBarCoPilotView extends ItemView {
 
       const selected = this.imagePresets.find((p) => p.id === selectedId);
       if (selected) {
-        this.inputEl.value = selected.prompt || "";
+        this.setInputPromptValue(selected.prompt || "", {
+          persist: false,
+          updateState: false,
+        });
       }
-
-      this.autoResizePromptInput();
+      this.renderRecentPresets();
       this.queuePersistSidebarState();
       this.updateGenerateButtonState();
     });
@@ -801,6 +833,16 @@ export class SideBarCoPilotView extends ItemView {
     });
 
     this.inputEl.addEventListener("input", () => {
+      const normalized = this.normalizeCurrentNoteShortcut(this.inputEl.value);
+      if (normalized !== this.inputEl.value) {
+        const cursor = this.inputEl.selectionStart ?? this.inputEl.value.length;
+        this.inputEl.value = normalized;
+        const nextCursor = Math.min(
+          cursor + ("@current_note".length - 1),
+          normalized.length,
+        );
+        this.inputEl.setSelectionRange(nextCursor, nextCursor);
+      }
       this.enforceReferenceLineLock();
       this.autoResizePromptInput();
       this.queuePersistSidebarState();
@@ -929,9 +971,12 @@ export class SideBarCoPilotView extends ItemView {
       this.presetSelect.value = "";
       this.presetDeleteBtn.disabled = true;
     }
+    this.renderRecentPresets();
 
-    this.inputEl.value = this.plugin.settings.sidebarDraftPrompt || "";
-    this.autoResizePromptInput();
+    this.setInputPromptValue(this.plugin.settings.sidebarDraftPrompt || "", {
+      persist: false,
+      updateState: false,
+    });
     // 不要在设置刷新时强制关闭图生图，避免输入时被意外重置。
     this.updateImageToImageControls();
 
@@ -950,12 +995,16 @@ export class SideBarCoPilotView extends ItemView {
       return;
     }
 
+    const selectedId = this.presetSelect?.value || "";
     const recentPresets = [...this.imagePresets].slice(-6).reverse();
     recentPresets.forEach((preset, index) => {
       const item = this.recentPresetsListEl.createEl("button", {
         cls: "sidebar-recent-preset-item",
         text: preset.name,
       });
+      if (preset.id === selectedId) {
+        item.addClass("is-active");
+      }
 
       if (index === 0) {
         item.addClass("is-latest");
@@ -965,8 +1014,11 @@ export class SideBarCoPilotView extends ItemView {
       item.addEventListener("click", () => {
         this.presetSelect.value = preset.id;
         this.presetDeleteBtn.disabled = false;
-        this.inputEl.value = preset.prompt || "";
-        this.autoResizePromptInput();
+        this.setInputPromptValue(preset.prompt || "", {
+          persist: false,
+          updateState: false,
+        });
+        this.renderRecentPresets();
         this.queuePersistSidebarState();
         this.updateGenerateButtonState();
       });
@@ -1027,8 +1079,10 @@ export class SideBarCoPilotView extends ItemView {
       (preset) => {
         this.presetSelect.value = preset.id;
         this.presetDeleteBtn.disabled = false;
-        this.inputEl.value = preset.prompt || "";
-        this.autoResizePromptInput();
+        this.setInputPromptValue(preset.prompt || "", {
+          persist: false,
+          updateState: false,
+        });
         this.queuePersistSidebarState();
         this.updateGenerateButtonState();
       },
@@ -1074,10 +1128,12 @@ export class SideBarCoPilotView extends ItemView {
         await this.plugin.saveSettings();
 
         this.rebuildPresetSelect(idToSelect);
-        this.inputEl.value = prompt;
-        this.autoResizePromptInput();
+        this.setInputPromptValue(prompt, {
+          persist: false,
+          updateState: false,
+        });
         this.plugin.settings.sidebarSelectedPresetId = idToSelect;
-        this.plugin.settings.sidebarDraftPrompt = prompt;
+        this.plugin.settings.sidebarDraftPrompt = this.inputEl.value;
         await this.plugin.saveSettings();
         this.updateGenerateButtonState();
         new Notice(this.tr("预设已保存", "Preset saved"));
@@ -1113,10 +1169,9 @@ export class SideBarCoPilotView extends ItemView {
     await this.plugin.saveSettings();
 
     this.rebuildPresetSelect("");
-    this.inputEl.value = "";
-    this.autoResizePromptInput();
+    this.setInputPromptValue("", { persist: false, updateState: false });
     this.plugin.settings.sidebarSelectedPresetId = "";
-    this.plugin.settings.sidebarDraftPrompt = "";
+    this.plugin.settings.sidebarDraftPrompt = this.inputEl.value;
     await this.plugin.saveSettings();
     this.updateGenerateButtonState();
     new Notice(this.tr("预设已删除", "Preset deleted"));
@@ -1379,11 +1434,7 @@ export class SideBarCoPilotView extends ItemView {
       try {
         const data = await this.app.vault.readBinary(file);
         const bytes = new Uint8Array(data);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i++) {
-          binary += String.fromCharCode(bytes[i]);
-        }
-        const base64 = btoa(binary);
+        const base64 = this.encodeBytesToBase64(bytes);
         next.push({
           base64,
           mimeType: this.getMimeTypeByFileName(file.name),
@@ -1416,6 +1467,17 @@ export class SideBarCoPilotView extends ItemView {
         ),
       );
     }
+  }
+
+  private encodeBytesToBase64(bytes: Uint8Array): string {
+    if (bytes.length === 0) return "";
+    const chunkSize = 0x8000;
+    const parts: string[] = [];
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      parts.push(String.fromCharCode(...chunk));
+    }
+    return btoa(parts.join(""));
   }
 
   private async collectCurrentNoteImageOptions(): Promise<NoteImageOption[]> {
@@ -1619,6 +1681,28 @@ export class SideBarCoPilotView extends ItemView {
     }, 220);
   }
 
+  private setInputPromptValue(
+    rawPrompt: string,
+    options?: { persist?: boolean; updateState?: boolean },
+  ): void {
+    if (!this.inputEl) return;
+    const persist = options?.persist ?? true;
+    const updateState = options?.updateState ?? true;
+
+    let next = this.normalizeCurrentNoteShortcut(rawPrompt || "");
+    if (this.isImageToImageEnabled) {
+      const refName = this.getPrimaryReferenceName();
+      if (refName) {
+        next = this.composePromptWithReferenceLine(next, refName);
+      }
+    }
+
+    this.inputEl.value = next;
+    this.autoResizePromptInput();
+    if (persist) this.queuePersistSidebarState();
+    if (updateState) this.updateGenerateButtonState();
+  }
+
   private registerActiveFileListener(): void {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -1723,6 +1807,173 @@ export class SideBarCoPilotView extends ItemView {
     }
   }
 
+  private hasCurrentNotePlaceholder(prompt: string): boolean {
+    if (!prompt) return false;
+    this.currentNoteShortcutPattern.lastIndex = 0;
+    if (this.currentNoteShortcutPattern.test(prompt)) {
+      this.currentNoteShortcutPattern.lastIndex = 0;
+      return true;
+    }
+    this.currentNoteShortcutPattern.lastIndex = 0;
+    this.currentNoteTokenPattern.lastIndex = 0;
+    if (this.currentNoteTokenPattern.test(prompt)) {
+      this.currentNoteTokenPattern.lastIndex = 0;
+      return true;
+    }
+    this.currentNoteTokenPattern.lastIndex = 0;
+    return this.currentNotePlaceholderTokens.some((token) =>
+      prompt.includes(token),
+    );
+  }
+
+  private getActiveMarkdownBasename(): string {
+    const file =
+      this.app.workspace.getActiveFile() || this.capturedContext?.file;
+    if (!file || file.extension !== "md") return "";
+    return file.basename || "";
+  }
+
+  private decorateCurrentNoteTokenWithName(prompt: string): string {
+    if (!prompt) return prompt;
+    const basename = this.getActiveMarkdownBasename();
+    if (!basename) return prompt;
+
+    let next = prompt;
+    this.currentNoteTokenPattern.lastIndex = 0;
+    next = next.replace(this.currentNoteTokenPattern, (match) => {
+      if (/\([^)]+\)$/.test(match)) return match;
+      return `@current_note(${basename})`;
+    });
+    this.currentNoteTokenPattern.lastIndex = 0;
+    return next;
+  }
+
+  private normalizeCurrentNoteShortcut(prompt: string): string {
+    if (!prompt) return prompt;
+    const basename = this.getActiveMarkdownBasename();
+    const replacement = basename
+      ? `@current_note(${basename})`
+      : "@current_note";
+    this.currentNoteShortcutPattern.lastIndex = 0;
+    const normalized = prompt.replace(
+      this.currentNoteShortcutPattern,
+      (_match, prefix: string) => `${prefix}${replacement}`,
+    );
+    return this.decorateCurrentNoteTokenWithName(normalized);
+  }
+
+  private stripMarkdownNoise(content: string): string {
+    let next = content || "";
+    next = next.replace(/^---\n[\s\S]*?\n---\n?/m, "");
+    next = next.replace(/```[\s\S]*?```/g, " ");
+    next = next.replace(/`[^`]*`/g, " ");
+    return next;
+  }
+
+  private collapseSpaces(text: string): string {
+    return text
+      .replace(/\r/g, "")
+      .replace(/[ \t]+/g, " ")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  private summarizeNoteForPrompt(content: string): string {
+    const cleaned = this.collapseSpaces(this.stripMarkdownNoise(content));
+    if (!cleaned) return "";
+
+    const lines = cleaned
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => Boolean(line));
+
+    const ranked: string[] = [];
+    const headings = lines
+      .filter((line) => /^#{1,4}\s+/.test(line))
+      .slice(0, 8)
+      .map((line) => line.replace(/^#{1,4}\s+/, ""));
+    const bullets = lines
+      .filter((line) => /^([-*]|\d+\.)\s+/.test(line))
+      .slice(0, 12)
+      .map((line) => line.replace(/^([-*]|\d+\.)\s+/, ""));
+    const paragraphs = lines
+      .filter(
+        (line) => !/^#{1,4}\s+/.test(line) && !/^([-*]|\d+\.)\s+/.test(line),
+      )
+      .slice(0, 12);
+
+    if (headings.length > 0) {
+      ranked.push(this.tr("标题与章节：", "Headings and sections:"));
+      headings.forEach((item) => ranked.push(`- ${item}`));
+    }
+    if (bullets.length > 0) {
+      ranked.push(this.tr("关键要点：", "Key points:"));
+      bullets.forEach((item) => ranked.push(`- ${item}`));
+    }
+    if (paragraphs.length > 0) {
+      ranked.push(this.tr("正文摘要：", "Body summary:"));
+      paragraphs.forEach((item) => ranked.push(`- ${item}`));
+    }
+
+    const merged = ranked.join("\n").trim() || cleaned.slice(0, 2000);
+    const maxChars = 3200;
+    if (merged.length <= maxChars) return merged;
+    return `${merged.slice(0, maxChars)}\n...`;
+  }
+
+  private async injectCurrentNoteContentIntoPrompt(
+    prompt: string,
+    context: NotesSelectionContext | null,
+  ): Promise<CurrentNoteInjectionResult> {
+    if (!this.hasCurrentNotePlaceholder(prompt)) {
+      return { prompt, replaced: false };
+    }
+
+    const noteFile = context?.file || this.app.workspace.getActiveFile();
+    if (!noteFile || noteFile.extension !== "md") {
+      throw new Error(
+        this.tr(
+          "使用 @current_note 需要先打开一个 Markdown 笔记",
+          "Using @current_note requires an active Markdown note",
+        ),
+      );
+    }
+
+    const raw = await this.app.vault.read(noteFile);
+    const summary = this.summarizeNoteForPrompt(raw);
+    if (!summary) {
+      throw new Error(
+        this.tr(
+          "当前笔记内容为空，无法从 @current_note 注入上下文",
+          "Current note is empty, unable to inject context from @current_note",
+        ),
+      );
+    }
+
+    const injectedBlock = [
+      this.tr("[当前笔记上下文]", "[Current Note Context]"),
+      `${this.tr("笔记名", "Note title")}: ${noteFile.basename}`,
+      `${this.tr("路径", "Path")}: ${noteFile.path}`,
+      this.tr(
+        "以下是自动提取的笔记摘要，请基于它完成本次生图：",
+        "Auto-extracted note summary for this generation:",
+      ),
+      summary,
+    ].join("\n");
+
+    let nextPrompt = prompt;
+    this.currentNoteTokenPattern.lastIndex = 0;
+    nextPrompt = nextPrompt.replace(
+      this.currentNoteTokenPattern,
+      injectedBlock,
+    );
+    this.currentNoteTokenPattern.lastIndex = 0;
+    this.currentNotePlaceholderTokens.forEach((token) => {
+      nextPrompt = nextPrompt.split(token).join(injectedBlock);
+    });
+    return { prompt: nextPrompt, replaced: true };
+  }
+
   private async handleGenerate(): Promise<void> {
     if (this.pendingTaskCount > 0) return;
 
@@ -1733,6 +1984,13 @@ export class SideBarCoPilotView extends ItemView {
     }
 
     let promptDraft = this.inputEl.value || "";
+    const normalizedShortcut = this.normalizeCurrentNoteShortcut(promptDraft);
+    if (normalizedShortcut !== promptDraft) {
+      promptDraft = normalizedShortcut;
+      this.inputEl.value = normalizedShortcut;
+      this.autoResizePromptInput();
+      this.queuePersistSidebarState();
+    }
 
     const refreshedContext = notesHandler.captureSelectionForSidebar();
     if (refreshedContext) {
@@ -1770,9 +2028,69 @@ export class SideBarCoPilotView extends ItemView {
       }
     }
 
-    const rawPrompt = promptDraft.trim();
+    let injected = promptDraft;
+    try {
+      const injectedResult = await this.injectCurrentNoteContentIntoPrompt(
+        promptDraft,
+        this.capturedContext,
+      );
+      injected = injectedResult.prompt;
+      if (injectedResult.replaced) {
+        new Notice(
+          this.tr(
+            "已自动读取当前笔记内容并注入生成上下文",
+            "Current note content has been injected into generation context",
+          ),
+        );
+      }
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : this.formatImageError(error);
+      new Notice(msg);
+      return;
+    }
+
+    const rawPrompt = injected.trim();
     if (!rawPrompt && !this.capturedContext?.selectedText?.trim()) {
       new Notice(t("Enter instructions"));
+      return;
+    }
+
+    const selectedCount = Number.parseInt(this.imageCountSelect.value, 10);
+    const requestCount =
+      Number.isFinite(selectedCount) && selectedCount >= 1 && selectedCount <= 9
+        ? selectedCount
+        : Math.min(9, Math.max(1, this.plugin.settings.defaultImageCount || 4));
+
+    if (
+      rawPrompt.includes(this.pptAutoMarker) ||
+      rawPrompt.includes(this.pptAutoLegacyMarker)
+    ) {
+      const pageCount = this.extractPptPageCountFromPrompt(rawPrompt);
+      const tasks = this.buildPptAutoGenerationTasks(
+        rawPrompt,
+        this.capturedContext,
+        pageCount,
+        requestCount,
+        inputImages,
+      );
+      if (tasks.length === 0) {
+        new Notice(
+          this.tr(
+            "PPT 自动拆页任务为空，请检查提示词",
+            "PPT auto-split tasks are empty. Please check the prompt.",
+          ),
+        );
+        return;
+      }
+      new Notice(
+        this.tr(
+          `已按 ${pageCount} 页拆解；每页 ${requestCount} 张候选，共 ${tasks.length} 个任务`,
+          `Split into ${pageCount} pages; ${requestCount} candidate(s) per page, ${tasks.length} tasks in total`,
+        ),
+      );
+      this.failedTasks = [];
+      this.startGenerationTasks(tasks);
       return;
     }
 
@@ -1782,11 +2100,6 @@ export class SideBarCoPilotView extends ItemView {
         : rawPrompt;
 
     this.failedTasks = [];
-    const selectedCount = Number.parseInt(this.imageCountSelect.value, 10);
-    const requestCount =
-      Number.isFinite(selectedCount) && selectedCount >= 1 && selectedCount <= 9
-        ? selectedCount
-        : Math.min(9, Math.max(1, this.plugin.settings.defaultImageCount || 4));
     this.startGenerationBatch(
       prompt,
       this.capturedContext,
@@ -1799,7 +2112,8 @@ export class SideBarCoPilotView extends ItemView {
     const current = this.inputEl?.value || "";
     const lines = current.split("\n");
     const hasRefLine =
-      lines.length > 0 && lines[0].startsWith(this.referencePromptPrefix);
+      lines.length > 0 &&
+      lines[0].trimStart().startsWith(this.referencePromptPrefix);
     const body = (hasRefLine ? lines.slice(1) : lines).join("\n").trim();
 
     if (!body) {
@@ -1809,6 +2123,25 @@ export class SideBarCoPilotView extends ItemView {
           "Please enter a prompt to optimize",
         ),
       );
+      return;
+    }
+
+    if (this.isPptRequest(body)) {
+      const primaryRefName = this.getPrimaryReferenceName();
+      const optimizedPpt = this.buildOptimizedPptPrompt(body);
+      this.inputEl.value =
+        this.isImageToImageEnabled && primaryRefName
+          ? this.composePromptWithReferenceLine(optimizedPpt, primaryRefName)
+          : optimizedPpt;
+      new Notice(
+        this.tr(
+          "已生成 PPT 自动拆页提示词（生成时按页拆解）",
+          "Generated PPT auto-split prompt (generation will split by pages)",
+        ),
+      );
+      this.autoResizePromptInput();
+      this.queuePersistSidebarState();
+      this.updateGenerateButtonState();
       return;
     }
 
@@ -1938,6 +2271,98 @@ export class SideBarCoPilotView extends ItemView {
     ].join("\n");
   }
 
+  private isPptRequest(text: string): boolean {
+    if (!text) return false;
+    return /(ppt|幻灯|课件|演示文稿|投影片|简报)/i.test(text);
+  }
+
+  private buildOptimizedPptPrompt(userPrompt: string): string {
+    const text = userPrompt.replace(/\s+/g, " ").trim();
+    const pageCount = this.extractPptPageCountFromPrompt(text);
+    const aspectRatio = this.extractPreferredAspectRatioFromPrompt(text);
+    const withCurrentNote =
+      this.hasCurrentNotePlaceholder(text) || text.includes("@current_note(")
+        ? text
+        : `@current_note\n${text}`;
+    const hasStyleConstraints =
+      /(风格|样式|背景|配色|颜色|字体|serif|sans|grid|布局|图表|质感|Claude|Anthropic|humanism|palette|typography|style)/i.test(
+        text,
+      );
+
+    const styleSection = hasStyleConstraints
+      ? [
+          this.tr("【风格策略】", "[Style Strategy]"),
+          this.tr(
+            "严格沿用并执行用户提示词中已有的风格、配色、字体、排版与图表要求；不要覆盖或改写。",
+            "Strictly follow the style, palette, typography, layout, and chart requirements already defined by the user; do not override or rewrite them.",
+          ),
+        ]
+      : [
+          this.tr(
+            "【风格兜底（仅在未提供风格时生效）】",
+            "[Style Fallback (only if user did not specify)]",
+          ),
+          "Warm academic humanism, 16:9 single-slide output, card-based clean grid, readable Chinese typography.",
+        ];
+
+    return [
+      this.pptAutoMarker,
+      this.tr(
+        `【PPT 自动拆页模式】生成时将自动拆成 ${pageCount} 页任务；参数“张数”=每页候选数。`,
+        `[PPT Auto Split Mode] Generation will split into ${pageCount} page tasks; Image Count = candidates per page.`,
+      ),
+      this.tr(
+        "请严格沿用用户提示词中的受众、语气、目标与内容要求，不要擅自改写定位。",
+        "Strictly preserve the audience, tone, goals, and content requirements from the user prompt; do not rewrite positioning.",
+      ),
+      "",
+      ...styleSection,
+      this.tr("【通用质量约束】", "[General Quality Constraints]"),
+      this.tr(
+        `一页一图（建议比例 ${aspectRatio}，若用户另有要求则以用户提示词为准），不要多页拼接长图；信息密度按用户提示词执行，缺省时保持版面充实且可读性优先。`,
+        `One slide per image (recommended ratio ${aspectRatio}, but user prompt takes priority), no multi-page long collage; follow user-defined information density, and keep slides content-rich and readable when unspecified.`,
+      ),
+      "",
+      this.tr("【内容来源】", "[Content Source]"),
+      withCurrentNote,
+      "",
+      this.tr("【页级拆分策略】", "[Page Split Strategy]"),
+      this.tr(
+        `按 ${pageCount} 页拆分并逐页生成：先抽取用户提示词中的章节/主题；若未明确章节，再使用通用结构兜底。`,
+        `Split into ${pageCount} slides and generate page by page: first extract sections/topics from the user prompt; use generic fallback only when sections are missing.`,
+      ),
+    ].join("\n");
+  }
+
+  private extractPptPageCountFromPrompt(prompt: string): number {
+    const text = (prompt || "").replace(/\s+/g, " ");
+    const patterns: RegExp[] = [
+      /(?:共|总计|总共|需要|生成|做|制作)\s*(\d{1,2})\s*页/i,
+      /(\d{1,2})\s*页(?:\s*(?:ppt|幻灯|课件|演示文稿|投影片|简报))?/i,
+      /(?:slides?|pages?)\s*[:：]?\s*(\d{1,2})/i,
+    ];
+    for (const p of patterns) {
+      const m = text.match(p);
+      if (!m) continue;
+      const value = Number.parseInt(m[1], 10);
+      if (Number.isFinite(value) && value >= 1 && value <= 30) {
+        return value;
+      }
+    }
+    return 8;
+  }
+
+  private extractPreferredAspectRatioFromPrompt(prompt: string): string {
+    const text = prompt || "";
+    const match = text.match(/\b(1:1|16:9|9:16|4:3|3:4)\b/i);
+    if (match?.[1]) return match[1];
+    return (
+      this.aspectRatioSelect?.value ||
+      this.plugin.settings.defaultAspectRatio ||
+      "16:9"
+    );
+  }
+
   private buildStrictImg2ImgPrompt(userPrompt: string): string {
     const withoutRefLine = this.composePromptWithReferenceLine(
       userPrompt,
@@ -1975,21 +2400,6 @@ export class SideBarCoPilotView extends ItemView {
     requestCount: number,
     inputImages: SidebarInputImage[] = [],
   ): void {
-    this.currentSessionId += 1;
-    const sessionId = this.currentSessionId;
-
-    this.activeRequestTotal = requestCount;
-    this.activeConcurrencyCount = 0;
-    this.pendingTaskCount = requestCount;
-    this.prepareBatchPlaceholders(
-      sessionId,
-      prompt,
-      context,
-      requestCount,
-      inputImages,
-    );
-    this.updateGenerateButtonState();
-
     const tasks: GenerationQueueTask[] = Array.from(
       { length: requestCount },
       (_, i) => ({
@@ -1999,37 +2409,273 @@ export class SideBarCoPilotView extends ItemView {
         inputImages: [...inputImages],
       }),
     );
-    this.runGenerationQueue(sessionId, tasks);
+    this.startGenerationTasks(tasks);
   }
 
-  private prepareBatchPlaceholders(
+  private startGenerationTasks(tasks: GenerationQueueTask[]): void {
+    if (tasks.length === 0) return;
+    this.currentSessionId += 1;
+    const sessionId = this.currentSessionId;
+    const sequencedTasks = tasks.map((task, index) => ({
+      ...task,
+      sequence: index + 1,
+    }));
+
+    this.activeRequestTotal = sequencedTasks.length;
+    this.activeConcurrencyCount = 0;
+    this.pendingTaskCount = sequencedTasks.length;
+    this.prepareTaskPlaceholders(sessionId, sequencedTasks);
+    this.updateGenerateButtonState();
+    this.runGenerationQueue(sessionId, sequencedTasks);
+  }
+
+  private prepareTaskPlaceholders(
     sessionId: number,
-    prompt: string,
-    context: NotesSelectionContext | null,
-    requestCount: number,
-    inputImages: SidebarInputImage[],
+    tasks: GenerationQueueTask[],
   ): void {
     // 每次新一轮生成默认清空旧候选，避免混入历史结果造成误解。
-    this.imageCandidates = Array.from({ length: requestCount }, (_, i) => ({
-      taskId: `pending-${sessionId}-${i + 1}`,
+    this.imageCandidates = tasks.map((task, i) => ({
+      taskId: `pending-${sessionId}-${task.sequence || i + 1}`,
       fileName: this.tr("生成中...", "Generating..."),
       filePath: "",
       notePath:
-        context?.file?.path || this.app.workspace.getActiveFile()?.path || "",
+        task.context?.file?.path ||
+        this.app.workspace.getActiveFile()?.path ||
+        "",
       createdAt: Date.now(),
       status: "pending" as const,
       sessionId,
-      sequence: i + 1,
-      sourcePrompt: prompt,
-      sourceContext: context,
-      sourceInputImages: [...inputImages],
+      sequence: task.sequence || i + 1,
+      sourcePrompt: task.prompt,
+      sourceContext: task.context,
+      sourceInputImages: [...task.inputImages],
     }));
     this.renderCandidateList();
   }
 
+  private buildPptAutoGenerationTasks(
+    prompt: string,
+    context: NotesSelectionContext | null,
+    pageCount: number,
+    perPageCandidates: number,
+    inputImages: SidebarInputImage[] = [],
+  ): GenerationQueueTask[] {
+    const safePageCount = Math.min(30, Math.max(1, pageCount));
+    const safePerPage = Math.min(9, Math.max(1, perPageCandidates));
+    const totalTasks = safePageCount * safePerPage;
+    const fallbackPages: string[] = Array.from(
+      { length: safePageCount },
+      (_, i) => this.getFallbackPptPageTitle(i),
+    );
+    const rawBasePrompt = prompt
+      .split("\n")
+      .filter(
+        (line) =>
+          !line.includes(this.pptAutoMarker) &&
+          !line.includes(this.pptAutoLegacyMarker),
+      )
+      .join("\n")
+      .trim();
+    const basePrompt = this.compactPptPromptForTaskCount(
+      rawBasePrompt,
+      totalTasks,
+    );
+    const pages = this.extractPptPageTitlesFromPrompt(
+      basePrompt,
+      fallbackPages,
+      safePageCount,
+    );
+    const tasks: GenerationQueueTask[] = [];
+
+    pages.forEach((pageTitle, pageIndex) => {
+      for (let variant = 1; variant <= safePerPage; variant++) {
+        const pagePrompt = [
+          basePrompt,
+          "",
+          this.tr("【当前仅生成这一页】", "[Generate This Page Only]"),
+          `${this.tr("页码", "Page")}: ${pageIndex + 1}/${pages.length}`,
+          `${this.tr("页面标题", "Slide title")}: ${pageTitle}`,
+          this.tr(
+            "仅输出这一页的完整 PPT 画面，不要输出多页拼接图。",
+            "Output only this single complete slide, not a multi-page collage.",
+          ),
+          `${this.tr("同页候选", "Variant")}: ${variant}/${safePerPage}`,
+          this.tr(
+            "同页候选之间可做版式/构图/插图细节差异，但保持主题和风格一致。",
+            "Variants can differ in layout/composition/illustration details while keeping theme and style consistent.",
+          ),
+        ].join("\n");
+        tasks.push({
+          prompt: pagePrompt,
+          context,
+          sequence: tasks.length + 1,
+          inputImages: [...inputImages],
+        });
+      }
+    });
+
+    return tasks;
+  }
+
+  private compactPptPromptForTaskCount(
+    prompt: string,
+    totalTasks: number,
+  ): string {
+    const trimmed = (prompt || "").trim();
+    if (!trimmed) return trimmed;
+
+    // 任务越多，基础提示词应越精简，避免重复传输同一大段上下文导致慢和贵。
+    const maxChars =
+      totalTasks > 120
+        ? 1800
+        : totalTasks > 64
+          ? 2400
+          : totalTasks > 24
+            ? 3200
+            : 4600;
+    if (trimmed.length <= maxChars) return trimmed;
+
+    const keepHead = Math.floor(maxChars * 0.78);
+    const keepTail = Math.max(180, maxChars - keepHead);
+    return `${trimmed.slice(0, keepHead).trim()}\n...\n${trimmed
+      .slice(Math.max(0, trimmed.length - keepTail))
+      .trim()}`;
+  }
+
+  private extractPptPageTitlesFromPrompt(
+    prompt: string,
+    fallbackPages: string[],
+    pageCount: number,
+  ): string[] {
+    const lines = (prompt || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => Boolean(line));
+    const found: string[] = [];
+    const seen = new Set<string>();
+
+    const explicitPatterns: RegExp[] = [
+      /^(?:[-*]\s*)?第\s*(\d{1,2})\s*页\s*[:：\-\s]+(.+)$/i,
+      /^(?:[-*]\s*)?(?:页|page|slide)\s*(\d{1,2})\s*[:：\-\s]+(.+)$/i,
+    ];
+
+    for (const line of lines) {
+      let m: RegExpMatchArray | null = null;
+      for (const pattern of explicitPatterns) {
+        m = line.match(pattern);
+        if (m) break;
+      }
+      if (!m) continue;
+      const rawTitle = (m[2] || "").trim();
+      const title = rawTitle
+        .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+        .replace(/\s{2,}/g, " ")
+        .trim();
+      if (!title) continue;
+      if (title.length > 80) continue;
+      if (
+        /^(ppt|slide|页面|页码|标题|全局风格|内容来源|页级|通用质量)/i.test(
+          title,
+        )
+      ) {
+        continue;
+      }
+      if (seen.has(title)) continue;
+      seen.add(title);
+      found.push(title);
+      if (found.length >= pageCount) break;
+    }
+
+    if (found.length >= Math.min(4, pageCount)) {
+      while (found.length < pageCount) {
+        found.push(fallbackPages[found.length]);
+      }
+      return found.slice(0, pageCount);
+    }
+    return fallbackPages.slice(0, pageCount);
+  }
+
+  private getFallbackPptPageTitle(index: number): string {
+    const defaults = [
+      this.tr("封面", "Cover"),
+      this.tr("这篇内容在讲什么", "What This Content Is About"),
+      this.tr("核心概念拆解", "Core Concepts"),
+      this.tr("流程图与主线", "Flow and Main Path"),
+      this.tr("场景与命令对照", "Scenario-to-Command Mapping"),
+      this.tr("关键对比", "Key Comparison"),
+      this.tr("实操步骤", "Practical Steps"),
+      this.tr("总结与行动", "Summary and Action"),
+    ];
+    if (index < defaults.length) return defaults[index];
+    return this.tr(`扩展内容 ${index + 1}`, `Extended Topic ${index + 1}`);
+  }
+
   private getGenerationConcurrency(taskCount: number): number {
-    // 并发数与用户选择张数一致（最多 9 张）
-    return Math.min(9, Math.max(1, taskCount));
+    // 默认并发与张数一致；弱网自动降并发，提升稳定性。
+    const requested = Math.min(9, Math.max(1, taskCount));
+    const networkType = this.getEffectiveNetworkType();
+    const online = navigator.onLine !== false;
+
+    if (!online) return 1;
+    if (networkType === "slow-2g") return Math.min(requested, 1);
+    if (networkType === "2g") return Math.min(requested, 2);
+    if (networkType === "3g") return Math.min(requested, 3);
+    return requested;
+  }
+
+  private getEffectiveNetworkType():
+    | "slow-2g"
+    | "2g"
+    | "3g"
+    | "4g"
+    | "unknown" {
+    const connection = (
+      navigator as Navigator & {
+        connection?: { effectiveType?: string };
+      }
+    ).connection;
+    const value = String(connection?.effectiveType || "").toLowerCase();
+    if (
+      value === "slow-2g" ||
+      value === "2g" ||
+      value === "3g" ||
+      value === "4g"
+    ) {
+      return value;
+    }
+    return "unknown";
+  }
+
+  private getRetryCountByNetwork(): number {
+    const networkType = this.getEffectiveNetworkType();
+    if (navigator.onLine === false) return 0;
+    if (networkType === "slow-2g" || networkType === "2g") return 3;
+    if (networkType === "3g") return 2;
+    return 1;
+  }
+
+  private getRetryDelayMs(retryIndex: number): number {
+    const networkType = this.getEffectiveNetworkType();
+    const base =
+      networkType === "slow-2g" || networkType === "2g" ? 1800 : 1200;
+    return Math.min(8000, base * 2 ** Math.max(0, retryIndex - 1));
+  }
+
+  private isRetryableErrorCode(code: ImageErrorCode): boolean {
+    return code === "超时" || code === "网络异常" || code === "服务异常";
+  }
+
+  private sleepWithSessionCancel(ms: number, sessionId: number): Promise<void> {
+    if (ms <= 0 || this.isSessionCanceled(sessionId)) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => {
+      const timer = window.setTimeout(() => resolve(), ms);
+      if (this.isSessionCanceled(sessionId)) {
+        window.clearTimeout(timer);
+        resolve();
+      }
+    });
   }
 
   private runGenerationQueue(
@@ -2038,6 +2684,14 @@ export class SideBarCoPilotView extends ItemView {
   ): void {
     if (tasks.length === 0) return;
     const concurrency = this.getGenerationConcurrency(tasks.length);
+    if (concurrency < tasks.length) {
+      new Notice(
+        this.tr(
+          `检测到网络较慢，并发已自动降为 ${concurrency} 路以提高稳定性`,
+          `Slow network detected. Concurrency auto-reduced to ${concurrency} for better stability.`,
+        ),
+      );
+    }
     let cursor = 0;
     let running = 0;
 
@@ -2085,11 +2739,45 @@ export class SideBarCoPilotView extends ItemView {
     }
 
     try {
-      const candidate = await notesHandler.handleImageGeneration(
-        prompt,
-        context,
-        inputImages,
-      );
+      const maxAttempts = 1 + this.getRetryCountByNetwork();
+      let candidate: GeneratedImageCandidate | null = null;
+      let lastError: unknown = null;
+
+      for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        if (this.isSessionCanceled(sessionId)) return;
+        try {
+          candidate = await notesHandler.handleImageGeneration(
+            prompt,
+            context,
+            inputImages,
+          );
+          break;
+        } catch (error) {
+          lastError = error;
+          const normalized = this.normalizeImageError(error);
+          const canRetry =
+            attempt < maxAttempts &&
+            this.isRetryableErrorCode(normalized.code) &&
+            !this.isSessionCanceled(sessionId);
+          if (!canRetry) {
+            break;
+          }
+
+          const delayMs = this.getRetryDelayMs(attempt);
+          this.addMessage(
+            "assistant",
+            this.tr(
+              `第 ${sequence} 张生成失败，${Math.round(delayMs / 1000)} 秒后自动重试（${attempt + 1}/${maxAttempts}）`,
+              `Image #${sequence} failed, retrying in ${Math.round(delayMs / 1000)}s (${attempt + 1}/${maxAttempts})`,
+            ),
+          );
+          await this.sleepWithSessionCancel(delayMs, sessionId);
+        }
+      }
+
+      if (!candidate) {
+        throw lastError || new Error("generation_failed");
+      }
 
       if (this.isSessionCanceled(sessionId)) {
         await notesHandler
@@ -2310,7 +2998,14 @@ export class SideBarCoPilotView extends ItemView {
     const notesHandler = this.plugin.getNotesHandler();
     notesHandler?.cancelImageTasks();
 
-    this.canceledSessionIds.add(this.currentSessionId);
+    const sessionId = this.currentSessionId;
+    this.canceledSessionIds.add(sessionId);
+    // 取消后立即移除当前会话的 pending 占位，避免“看起来还在生成”。
+    this.imageCandidates = this.imageCandidates.filter(
+      (candidate) =>
+        !(candidate.sessionId === sessionId && candidate.status === "pending"),
+    );
+    this.renderCandidateList();
     this.activeConcurrencyCount = 0;
     this.pendingTaskCount = 0;
     this.activeRequestTotal = 0;
@@ -2324,21 +3019,6 @@ export class SideBarCoPilotView extends ItemView {
     const tasksToRetry = [...this.failedTasks];
     this.failedTasks = [];
 
-    this.currentSessionId += 1;
-    const sessionId = this.currentSessionId;
-    this.activeRequestTotal = tasksToRetry.length;
-    this.activeConcurrencyCount = 0;
-    this.pendingTaskCount = tasksToRetry.length;
-    const first = tasksToRetry[0];
-    this.prepareBatchPlaceholders(
-      sessionId,
-      first?.prompt || "",
-      first?.context || null,
-      tasksToRetry.length,
-      first?.inputImages || [],
-    );
-    this.updateGenerateButtonState();
-
     const queueTasks: GenerationQueueTask[] = tasksToRetry.map(
       (task, index) => ({
         prompt: task.prompt,
@@ -2347,7 +3027,7 @@ export class SideBarCoPilotView extends ItemView {
         inputImages: [...task.inputImages],
       }),
     );
-    this.runGenerationQueue(sessionId, queueTasks);
+    this.startGenerationTasks(queueTasks);
   }
 
   private addMessage(role: "user" | "assistant", content: string): void {
@@ -2434,9 +3114,46 @@ export class SideBarCoPilotView extends ItemView {
   }
 
   private renderCandidateList(): void {
+    this.renderCandidateListInternal(false);
+  }
+
+  private scheduleCandidateListRender(): void {
+    if (this.candidateRenderRaf !== null) return;
+    this.candidateRenderRaf = window.requestAnimationFrame(() => {
+      this.candidateRenderRaf = null;
+      this.renderCandidateListInternal(true);
+    });
+  }
+
+  private getCandidateLayoutMetrics(total: number): {
+    columns: number;
+    rowHeight: number;
+    totalRows: number;
+    viewportHeight: number;
+    scrollTop: number;
+  } {
+    const width = Math.max(1, this.candidateListEl.clientWidth);
+    const columns = Math.max(
+      1,
+      Math.floor(
+        (width + this.candidateGridGap) /
+          (this.candidateGridMinWidth + this.candidateGridGap),
+      ),
+    );
+    const itemWidth =
+      (width - (columns - 1) * this.candidateGridGap) / Math.max(1, columns);
+    const rowHeight = Math.max(96, Math.ceil(itemWidth + 14));
+    const totalRows = Math.max(1, Math.ceil(total / columns));
+    const viewportHeight = Math.max(1, this.candidateListEl.clientHeight);
+    const scrollTop = this.candidateListEl.scrollTop;
+    return { columns, rowHeight, totalRows, viewportHeight, scrollTop };
+  }
+
+  private renderCandidateListInternal(fromScroll: boolean): void {
     this.candidateListEl.empty();
 
     if (this.imageCandidates.length === 0) {
+      this.candidateViewportKey = "";
       this.candidateListEl.createDiv({
         cls: "sidebar-image-candidate-empty",
         text: this.tr("暂无图片", "No images yet"),
@@ -2444,107 +3161,149 @@ export class SideBarCoPilotView extends ItemView {
       return;
     }
 
-    this.imageCandidates.forEach((candidate) => {
-      const card = this.candidateListEl.createDiv(
-        "sidebar-image-candidate-card",
+    const { columns, rowHeight, totalRows, viewportHeight, scrollTop } =
+      this.getCandidateLayoutMetrics(this.imageCandidates.length);
+    const startRow = Math.max(
+      0,
+      Math.floor(scrollTop / rowHeight) - this.candidateVirtualOverscanRows,
+    );
+    const endRow = Math.min(
+      totalRows,
+      Math.ceil((scrollTop + viewportHeight) / rowHeight) +
+        this.candidateVirtualOverscanRows,
+    );
+    const startIndex = startRow * columns;
+    const endIndex = Math.min(this.imageCandidates.length, endRow * columns);
+    const viewportKey = `${startIndex}-${endIndex}-${columns}-${this.imageCandidates.length}`;
+
+    if (fromScroll && viewportKey === this.candidateViewportKey) {
+      return;
+    }
+    this.candidateViewportKey = viewportKey;
+
+    const topPad = Math.max(0, startRow * rowHeight);
+    const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
+    if (topPad > 0) {
+      const topSpacer = this.candidateListEl.createDiv(
+        "sidebar-image-candidate-spacer",
+      );
+      topSpacer.style.height = `${topPad}px`;
+    }
+
+    this.imageCandidates
+      .slice(startIndex, endIndex)
+      .forEach((candidate) =>
+        this.renderCandidateCard(this.candidateListEl, candidate),
       );
 
-      const previewSrc = this.getCandidatePreviewSrc(candidate.filePath);
-      const preview = card.createDiv("sidebar-image-candidate-preview");
-
-      const statusText =
-        candidate.status === "pending"
-          ? this.tr("生成中", "Generating")
-          : candidate.status === "ready"
-            ? this.tr("待插入", "Ready")
-            : this.tr("已插入", "Inserted");
-      preview.createDiv({
-        cls: `sidebar-image-candidate-status status-${candidate.status}`,
-        text: statusText,
-      });
-
-      const actions = preview.createDiv(
-        "sidebar-image-candidate-actions-overlay",
+    if (bottomPad > 0) {
+      const bottomSpacer = this.candidateListEl.createDiv(
+        "sidebar-image-candidate-spacer",
       );
-      const insertBtn = actions.createEl("button", {
-        cls: "mod-cta candidate-btn-insert",
-        text: this.tr("插入", "Insert"),
-      });
-      const regenerateBtn = actions.createEl("button", {
-        cls: "candidate-btn-regenerate",
-        text: this.tr("重生", "Regenerate"),
-      });
-      const discardBtn = actions.createEl("button", {
-        cls: "candidate-btn-discard",
-        text: this.tr("丢弃", "Discard"),
-      });
-      const copyPathBtn = actions.createEl("button", {
-        cls: "candidate-btn-copy",
-        text: this.tr("复制嵌入", "Copy Embed"),
-      });
+      bottomSpacer.style.height = `${bottomPad}px`;
+    }
+  }
 
-      if (previewSrc) {
-        const img = preview.createEl("img", {
-          attr: { src: previewSrc, alt: candidate.fileName },
-        });
-        img.loading = "lazy";
-        preview.addClass("is-clickable");
-        preview.setAttr(
-          "title",
-          this.tr(
-            "悬停或点击显示操作；双击查看大图",
-            "Hover/click to show actions; double-click to preview",
-          ),
+  private renderCandidateCard(
+    parent: HTMLElement,
+    candidate: SidebarImageCandidate,
+  ): void {
+    const card = parent.createDiv("sidebar-image-candidate-card");
+    const previewSrc = this.getCandidatePreviewSrc(candidate.filePath);
+    const preview = card.createDiv("sidebar-image-candidate-preview");
+
+    const statusText =
+      candidate.status === "pending"
+        ? this.tr("生成中", "Generating")
+        : candidate.status === "ready"
+          ? this.tr("待插入", "Ready")
+          : this.tr("已插入", "Inserted");
+    preview.createDiv({
+      cls: `sidebar-image-candidate-status status-${candidate.status}`,
+      text: statusText,
+    });
+
+    const actions = preview.createDiv(
+      "sidebar-image-candidate-actions-overlay",
+    );
+    const insertBtn = actions.createEl("button", {
+      cls: "mod-cta candidate-btn-insert",
+      text: this.tr("插入", "Insert"),
+    });
+    const regenerateBtn = actions.createEl("button", {
+      cls: "candidate-btn-regenerate",
+      text: this.tr("重生", "Regenerate"),
+    });
+    const discardBtn = actions.createEl("button", {
+      cls: "candidate-btn-discard",
+      text: this.tr("丢弃", "Discard"),
+    });
+    const copyPathBtn = actions.createEl("button", {
+      cls: "candidate-btn-copy",
+      text: this.tr("复制嵌入", "Copy Embed"),
+    });
+
+    if (previewSrc) {
+      const img = preview.createEl("img", {
+        attr: { src: previewSrc, alt: candidate.fileName },
+      });
+      img.loading = "lazy";
+      preview.addClass("is-clickable");
+      preview.setAttr(
+        "title",
+        this.tr(
+          "悬停或点击显示操作；双击查看大图",
+          "Hover/click to show actions; double-click to preview",
+        ),
+      );
+      preview.addEventListener("click", () => {
+        card.toggleClass("is-actions-visible", true);
+      });
+      preview.addEventListener("dblclick", () => {
+        const modal = new ReferenceImagePreviewModal(
+          this.app,
+          previewSrc,
+          candidate.fileName,
         );
-        preview.addEventListener("click", () => {
-          card.toggleClass("is-actions-visible", true);
-        });
-        preview.addEventListener("dblclick", () => {
-          const modal = new ReferenceImagePreviewModal(
-            this.app,
-            previewSrc,
-            candidate.fileName,
-          );
-          modal.open();
-        });
-      } else {
-        preview.createDiv({
-          cls: "sidebar-image-candidate-preview-empty",
-          text: this.tr("图片预览不可用", "Preview unavailable"),
-        });
-        card.addClass("is-actions-visible");
-      }
+        modal.open();
+      });
+    } else {
+      preview.createDiv({
+        cls: "sidebar-image-candidate-preview-empty",
+        text: this.tr("图片预览不可用", "Preview unavailable"),
+      });
+      card.addClass("is-actions-visible");
+    }
 
-      const canInsertSingle =
-        candidate.status === "ready" && !this.isBulkInserting;
-      const canOperateCompletedCandidate =
-        (candidate.status === "ready" || candidate.status === "inserted") &&
-        !this.isBulkInserting;
-      insertBtn.disabled = !canInsertSingle;
-      regenerateBtn.disabled = !canOperateCompletedCandidate;
-      discardBtn.disabled = !canOperateCompletedCandidate;
-      copyPathBtn.disabled = !canOperateCompletedCandidate;
+    const canInsertSingle =
+      candidate.status === "ready" && !this.isBulkInserting;
+    const canOperateCompletedCandidate =
+      (candidate.status === "ready" || candidate.status === "inserted") &&
+      !this.isBulkInserting;
+    insertBtn.disabled = !canInsertSingle;
+    regenerateBtn.disabled = !canOperateCompletedCandidate;
+    discardBtn.disabled = !canOperateCompletedCandidate;
+    copyPathBtn.disabled = !canOperateCompletedCandidate;
 
-      const markVisible = (): void => card.addClass("is-actions-visible");
-      [insertBtn, regenerateBtn, discardBtn, copyPathBtn].forEach((btn) => {
-        btn.addEventListener("click", (event) => {
-          event.stopPropagation();
-          markVisible();
-        });
+    const markVisible = (): void => card.addClass("is-actions-visible");
+    [insertBtn, regenerateBtn, discardBtn, copyPathBtn].forEach((btn) => {
+      btn.addEventListener("click", (event) => {
+        event.stopPropagation();
+        markVisible();
       });
+    });
 
-      insertBtn.addEventListener("click", () => {
-        void this.handleInsertCandidate(candidate.taskId);
-      });
-      regenerateBtn.addEventListener("click", () => {
-        void this.handleRegenerateCandidate(candidate.taskId);
-      });
-      discardBtn.addEventListener("click", () => {
-        void this.handleDiscardCandidate(candidate.taskId);
-      });
-      copyPathBtn.addEventListener("click", () => {
-        void this.handleCopyCandidateEmbed(candidate.taskId);
-      });
+    insertBtn.addEventListener("click", () => {
+      void this.handleInsertCandidate(candidate.taskId);
+    });
+    regenerateBtn.addEventListener("click", () => {
+      void this.handleRegenerateCandidate(candidate.taskId);
+    });
+    discardBtn.addEventListener("click", () => {
+      void this.handleDiscardCandidate(candidate.taskId);
+    });
+    copyPathBtn.addEventListener("click", () => {
+      void this.handleCopyCandidateEmbed(candidate.taskId);
     });
   }
 

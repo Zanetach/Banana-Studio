@@ -221,6 +221,7 @@ export class ApiManager {
     contextText?: string,
     aspectRatio?: string,
     resolution?: string,
+    abortSignal?: AbortSignal,
   ): Promise<string> {
     if (!this.isConfigured()) {
       throw new Error(
@@ -237,6 +238,7 @@ export class ApiManager {
           contextText,
           aspectRatio,
           resolution,
+          abortSignal,
         );
       case "openai":
         return this.openai.generateImage(
@@ -245,6 +247,7 @@ export class ApiManager {
           contextText,
           aspectRatio,
           resolution,
+          abortSignal,
         );
       case "zenmux":
         return this.zenmux.generateImage(
@@ -253,6 +256,7 @@ export class ApiManager {
           contextText,
           aspectRatio,
           resolution,
+          abortSignal,
         );
       default:
         return this.openrouter.generateImage(
@@ -261,6 +265,7 @@ export class ApiManager {
           contextText,
           aspectRatio,
           resolution,
+          abortSignal,
         );
     }
   }

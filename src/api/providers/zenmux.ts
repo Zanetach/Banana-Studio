@@ -1,5 +1,11 @@
-import type { CanvasAISettings } from '../../settings/settings';
-import { isHttpError, getErrorMessage, requestUrlWithTimeout } from '../utils';
+import type { CanvasAISettings } from "../../settings/settings";
+import {
+  isHttpError,
+  getErrorMessage,
+  requestUrlWithTimeout,
+  createAbortSignalWithTimeout,
+  isAbortError,
+} from "../utils";
 
 export class ZenMuxProvider {
   private settings: CanvasAISettings;
@@ -13,32 +19,36 @@ export class ZenMuxProvider {
   }
 
   getApiKey(): string {
-    return this.settings.zenmuxApiKey || '';
+    return this.settings.zenmuxApiKey || "";
   }
 
   getTextModel(): string {
-    return this.settings.zenmuxTextModel || 'google/gemini-2.5-flash';
+    return this.settings.zenmuxTextModel || "google/gemini-2.5-flash";
   }
 
   getImageModel(): string {
-    return this.settings.zenmuxImageModel || 'google/gemini-3-pro-image-preview';
+    return (
+      this.settings.zenmuxImageModel || "google/gemini-3-pro-image-preview"
+    );
   }
 
   private getBaseUrl(): string {
-    return (this.settings.zenmuxBaseUrl || 'https://zenmux.ai/api/vertex-ai').replace(/\/+$/, '');
+    return (
+      this.settings.zenmuxBaseUrl || "https://zenmux.ai/api/vertex-ai"
+    ).replace(/\/+$/, "");
   }
 
   private parseModel(model: string): { provider: string; modelName: string } {
-    const [provider, ...rest] = model.split('/');
+    const [provider, ...rest] = model.split("/");
     if (rest.length === 0) {
-      return { provider: 'google', modelName: provider };
+      return { provider: "google", modelName: provider };
     }
-    return { provider, modelName: rest.join('/') };
+    return { provider, modelName: rest.join("/") };
   }
 
   private getGenerateEndpoint(model: string, stream: boolean = false): string {
     const { provider, modelName } = this.parseModel(model);
-    const op = stream ? 'streamGenerateContent' : 'generateContent';
+    const op = stream ? "streamGenerateContent" : "generateContent";
     return `${this.getBaseUrl()}/v1/publishers/${provider}/models/${modelName}:${op}`;
   }
 
@@ -54,22 +64,22 @@ export class ZenMuxProvider {
     parts.push({ text: prompt });
 
     const body = {
-      contents: [{ role: 'user', parts }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         temperature,
-        responseModalities: ['TEXT'],
+        responseModalities: ["TEXT"],
       },
     };
 
     const data = await this.sendRequest(this.getTextModel(), body);
     const partsOut = data?.candidates?.[0]?.content?.parts || [];
     const text = partsOut
-      .map((p: { text?: string }) => p.text || '')
-      .join('')
+      .map((p: { text?: string }) => p.text || "")
+      .join("")
       .trim();
 
     if (!text) {
-      throw new Error('ZenMux returned no text content');
+      throw new Error("ZenMux returned no text content");
     }
     return text;
   }
@@ -90,10 +100,10 @@ export class ZenMuxProvider {
     contextText?: string,
     aspectRatio?: string,
     resolution?: string,
+    abortSignal?: AbortSignal,
   ): Promise<string> {
     const parts: Array<
-      | { text: string }
-      | { inlineData: { mimeType: string; data: string } }
+      { text: string } | { inlineData: { mimeType: string; data: string } }
     > = [];
 
     if (this.settings.imageSystemPrompt?.trim()) {
@@ -104,7 +114,7 @@ export class ZenMuxProvider {
       parts.push({ text: `\n[Ref: ${img.role}]` });
       parts.push({
         inlineData: {
-          mimeType: img.mimeType || 'image/png',
+          mimeType: img.mimeType || "image/png",
           data: img.base64,
         },
       });
@@ -121,7 +131,7 @@ export class ZenMuxProvider {
       imageConfig?: { aspectRatio?: string; imageSize?: string };
     } = {
       // ZenMux image generation requires both TEXT and IMAGE modalities.
-      responseModalities: ['TEXT', 'IMAGE'],
+      responseModalities: ["TEXT", "IMAGE"],
     };
 
     if (aspectRatio || resolution) {
@@ -131,37 +141,40 @@ export class ZenMuxProvider {
     }
 
     const body = {
-      contents: [{ role: 'user', parts }],
+      contents: [{ role: "user", parts }],
       generationConfig,
     };
 
-    const data = await this.sendRequest(this.getImageModel(), body);
+    const data = await this.sendRequest(
+      this.getImageModel(),
+      body,
+      abortSignal,
+    );
     const responseParts = data?.candidates?.[0]?.content?.parts || [];
 
     for (const part of responseParts) {
       const inlineData = part?.inlineData;
       if (inlineData?.data) {
-        const mimeType = inlineData.mimeType || 'image/png';
+        const mimeType = inlineData.mimeType || "image/png";
         return `data:${mimeType};base64,${inlineData.data}`;
       }
     }
 
     const text = responseParts
-      .map((p: { text?: string }) => p.text || '')
-      .join('')
+      .map((p: { text?: string }) => p.text || "")
+      .join("")
       .trim();
-    throw new Error(text || 'ZenMux returned no image content');
+    throw new Error(text || "ZenMux returned no image content");
   }
 
   async multimodalChat(
     prompt: string,
-    mediaList: { base64: string; mimeType: string; type: 'image' | 'pdf' }[],
+    mediaList: { base64: string; mimeType: string; type: "image" | "pdf" }[],
     systemPrompt?: string,
     temperature: number = 0.7,
   ): Promise<{ content: string; thinking?: string }> {
     const parts: Array<
-      | { text: string }
-      | { inlineData: { mimeType: string; data: string } }
+      { text: string } | { inlineData: { mimeType: string; data: string } }
     > = [];
 
     if (systemPrompt?.trim()) {
@@ -169,7 +182,7 @@ export class ZenMuxProvider {
     }
 
     for (const media of mediaList) {
-      if (media.type !== 'image') continue;
+      if (media.type !== "image") continue;
       parts.push({
         inlineData: {
           mimeType: media.mimeType,
@@ -181,35 +194,68 @@ export class ZenMuxProvider {
     parts.push({ text: prompt });
 
     const body = {
-      contents: [{ role: 'user', parts }],
+      contents: [{ role: "user", parts }],
       generationConfig: {
         temperature,
-        responseModalities: ['TEXT'],
+        responseModalities: ["TEXT"],
       },
     };
 
     const data = await this.sendRequest(this.getTextModel(), body);
     const text = (data?.candidates?.[0]?.content?.parts || [])
-      .map((p: { text?: string }) => p.text || '')
-      .join('')
+      .map((p: { text?: string }) => p.text || "")
+      .join("")
       .trim();
 
     return { content: text };
   }
 
-  private async sendRequest(model: string, body: object): Promise<any> {
+  private async sendRequest(
+    model: string,
+    body: object,
+    abortSignal?: AbortSignal,
+  ): Promise<any> {
     const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
     const requestParams = {
       url: this.getGenerateEndpoint(model, false),
-      method: 'POST' as const,
+      method: "POST" as const,
       headers: {
         Authorization: `Bearer ${this.getApiKey()}`,
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
     };
 
     try {
+      if (abortSignal) {
+        const { signal, cleanup } = createAbortSignalWithTimeout(
+          timeoutMs,
+          abortSignal,
+        );
+        try {
+          const response = await globalThis.fetch(requestParams.url, {
+            method: requestParams.method,
+            headers: requestParams.headers,
+            body: requestParams.body,
+            signal,
+          });
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(
+              `ZenMux API Error (${response.status}): ${errorText}`,
+            );
+          }
+          return await response.json();
+        } catch (error: unknown) {
+          if (isAbortError(error)) {
+            throw new DOMException("Image generation aborted", "AbortError");
+          }
+          throw error;
+        } finally {
+          cleanup();
+        }
+      }
+
       const response = await requestUrlWithTimeout(requestParams, timeoutMs);
       return response.json;
     } catch (error: unknown) {

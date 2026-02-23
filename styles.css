@@ -1067,10 +1067,12 @@
 .sidebar-image-candidates {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    overflow: hidden;
     border-bottom: 1px solid var(--background-modifier-border);
     padding: 10px 12px 12px;
     background: var(--background-primary);
+    display: flex;
+    flex-direction: column;
 }
 
 .sidebar-image-candidates-header {
@@ -1119,6 +1121,11 @@
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
     gap: 8px;
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    align-content: start;
+    padding-right: 2px;
 }
 
 .sidebar-image-candidate-card {
@@ -1287,9 +1294,16 @@
 }
 
 .sidebar-image-candidate-empty {
+    grid-column: 1 / -1;
     font-size: 12px;
     color: var(--text-faint);
     padding: 6px 2px;
+}
+
+.sidebar-image-candidate-spacer {
+    grid-column: 1 / -1;
+    width: 100%;
+    pointer-events: none;
 }
 
 /* ========== Sidebar Message Header (Removed) - Keeping commented out styles if needed later or just clean up ========== */
@@ -1778,9 +1792,30 @@
     cursor: pointer;
 }
 
-.sidebar-recent-preset-item.is-latest {
+.sidebar-recent-preset-item.is-active {
     border-color: var(--interactive-accent);
-    box-shadow: 0 0 0 1px rgba(var(--interactive-accent-rgb), 0.18);
+    box-shadow: 0 0 0 1px rgba(var(--interactive-accent-rgb), 0.2);
+    background: color-mix(
+        in srgb,
+        var(--interactive-accent) 10%,
+        var(--background-primary) 90%
+    );
+}
+
+.sidebar-recent-preset-item.is-latest {
+    position: relative;
+}
+
+.sidebar-recent-preset-item.is-latest::after {
+    content: "";
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    width: 6px;
+    height: 6px;
+    border-radius: 999px;
+    background: var(--text-faint);
+    opacity: 0.7;
 }
 
 .sidebar-recent-preset-item:hover {
