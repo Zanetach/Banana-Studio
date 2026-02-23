@@ -8,7 +8,8 @@
         "dev": "npm run version-sync && node esbuild.config.mjs",
         "build": "npm run version-sync && tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
         "lint": "eslint .",
-        "version": "npm run version-sync && git add manifest.json versions.json"
+        "version": "npm run version-sync && git add manifest.json versions.json",
+        "deploy:dev": "bash scripts/deploy-dev.sh"
     },
     "keywords": [
         "obsidian",

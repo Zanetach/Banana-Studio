@@ -2,7 +2,7 @@
  * 图片工具函数 - 共享于 Notes 和 Sidebar 模块
  */
 
-import { App, TFile, Vault } from "obsidian";
+import { App, TFile, TFolder, Vault } from "obsidian";
 import type { CanvasAISettings } from "../settings/settings";
 
 /**
@@ -48,12 +48,24 @@ export async function extractDocumentImages(
 ): Promise<{ base64: string; mimeType: string; type: "image" }[]> {
   const images: { base64: string; mimeType: string; type: "image" }[] = [];
 
-  // 解析 ![[image.png]] 语法
-  const regex = /!\[\[([^\]]+\.(png|jpg|jpeg|gif|webp|svg|bmp))\]\]/gi;
   const matches: string[] = [];
+
+  // 解析 Obsidian 语法 ![[image.png]]
+  const obsidianRegex = /!\[\[([^\]]+\.(png|jpg|jpeg|gif|webp|svg|bmp))\]\]/gi;
   let match;
-  while ((match = regex.exec(content)) !== null) {
+  while ((match = obsidianRegex.exec(content)) !== null) {
     matches.push(match[1]);
+  }
+
+  // 解析 Markdown 语法 ![alt](path/image.png) / ![alt](<path/image.png>)
+  const markdownRegex =
+    /!\[[^\]]*]\(([^)]+\.(?:png|jpg|jpeg|gif|webp|svg|bmp)[^)]*)\)/gi;
+  while ((match = markdownRegex.exec(content)) !== null) {
+    const rawTarget = (match[1] || "").trim();
+    const normalizedTarget = normalizeMarkdownImageTarget(rawTarget);
+    if (normalizedTarget) {
+      matches.push(normalizedTarget);
+    }
   }
 
   if (matches.length === 0) {
@@ -96,19 +108,38 @@ export async function extractDocumentImages(
   return images;
 }
 
+function normalizeMarkdownImageTarget(rawTarget: string): string {
+  if (!rawTarget) return "";
+
+  // 处理 ![alt](<path/to/img.png>)
+  if (rawTarget.startsWith("<") && rawTarget.includes(">")) {
+    return rawTarget.slice(1, rawTarget.indexOf(">")).trim();
+  }
+
+  // 处理 ![alt](path/to/img.png "title")
+  return rawTarget.split(/\s+/)[0]?.trim() || "";
+}
+
 /**
- * 保存生成的图片到 vault（与当前文件相同目录）
+ * 保存生成的图片到 vault（优先使用设置目录，否则保存到当前文件同目录）
  */
 export async function saveImageToVault(
   vault: Vault,
   base64DataUrl: string,
   currentFile: TFile,
+  targetFolder?: string,
 ): Promise<{ fileName: string; filePath: string }> {
   const timestamp = Date.now();
   const fileName = `ai-generated-${timestamp}.png`;
 
-  // 保存到与当前文件相同目录
-  const folder = currentFile.parent?.path || "";
+  const preferredFolder = (targetFolder || "").trim();
+  // 保存到设置目录（如有），否则回退到当前文件目录
+  const rawFolder = preferredFolder || currentFile.parent?.path || "";
+  // Obsidian 根目录可能是 "/"，这里统一归一化，避免出现 "//file.png"。
+  const folder = normalizeFolderPath(rawFolder);
+  if (folder) {
+    await ensureFolderExists(vault, folder);
+  }
   const filePath = folder ? `${folder}/${fileName}` : fileName;
 
   // 转换 base64 并写入
@@ -121,6 +152,40 @@ export async function saveImageToVault(
 
   await vault.createBinary(filePath, bytes.buffer);
   return { fileName, filePath };
+}
+
+function normalizeFolderPath(rawPath: string): string {
+  const trimmed = rawPath.trim();
+  if (!trimmed || trimmed === "/") return "";
+  return trimmed.replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+async function ensureFolderExists(
+  vault: Vault,
+  folderPath: string,
+): Promise<void> {
+  const normalized = normalizeFolderPath(folderPath);
+  if (!normalized) return;
+
+  const existing = vault.getAbstractFileByPath(normalized);
+  if (existing instanceof TFolder) {
+    return;
+  }
+  if (existing && !(existing instanceof TFolder)) {
+    throw new Error(`保存路径冲突：${normalized} 已存在且不是文件夹`);
+  }
+
+  const segments = normalized.split("/").filter(Boolean);
+  let current = "";
+  for (const segment of segments) {
+    current = current ? `${current}/${segment}` : segment;
+    const node = vault.getAbstractFileByPath(current);
+    if (node instanceof TFolder) continue;
+    if (node && !(node instanceof TFolder)) {
+      throw new Error(`保存路径冲突：${current} 已存在且不是文件夹`);
+    }
+    await vault.createFolder(current);
+  }
 }
 
 async function readSingleImageFile(

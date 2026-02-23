@@ -60,6 +60,11 @@ export default class CanvasAIPlugin extends Plugin {
   }
 
   private migrateLegacySettings(): void {
+    const rawProvider = this.settings.apiProvider as string;
+    if (rawProvider === "yunwu" || rawProvider === "gptgod") {
+      this.settings.apiProvider = "openrouter";
+    }
+
     if (this.settings.textModel && !this.settings.openRouterTextModel) {
       this.settings.openRouterTextModel = this.settings.textModel;
       this.settings.textModel = undefined;

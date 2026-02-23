@@ -37,15 +37,17 @@ export class GeminiProvider {
   }
 
   getTextModel(): string {
-    return this.isYunwu
+    const model = this.isYunwu
       ? this.settings.yunwuTextModel || "gemini-2.0-flash"
       : this.settings.geminiTextModel || "gemini-2.5-flash";
+    return this.normalizeModel(model);
   }
 
   getImageModel(): string {
-    return this.isYunwu
+    const model = this.isYunwu
       ? this.settings.yunwuImageModel || "gemini-3-pro-image-preview"
       : this.settings.geminiImageModel || "gemini-2.5-flash-preview-05-20";
+    return this.normalizeModel(model);
   }
 
   private getBaseUrl(): string {
@@ -53,6 +55,10 @@ export class GeminiProvider {
       ? this.settings.yunwuBaseUrl || "https://yunwu.ai"
       : this.settings.geminiBaseUrl ||
           "https://generativelanguage.googleapis.com";
+  }
+
+  private normalizeModel(model: string): string {
+    return (model || "").replace(/^google\//, "");
   }
 
   private getEndpoint(model: string): string {
@@ -67,7 +73,7 @@ export class GeminiProvider {
   async chatCompletion(
     prompt: string | GeminiContent[],
     systemPrompt?: string,
-    temperature: number = 1.0
+    temperature: number = 1.0,
   ): Promise<string> {
     const model = this.getTextModel();
     const endpoint = this.getEndpoint(model);
@@ -89,7 +95,9 @@ export class GeminiProvider {
       requestBody.systemInstruction = { parts: [{ text: systemPrompt }] };
     }
 
-    console.debug(`Banana Studio: [${this.providerName}] Sending chat request...`);
+    console.debug(
+      `Banana Studio: [${this.providerName}] Sending chat request...`,
+    );
 
     const requestParams: RequestUrlParam = {
       url: endpoint,
@@ -115,7 +123,7 @@ export class GeminiProvider {
     imagesWithRoles: { base64: string; mimeType: string; role: string }[],
     contextText?: string,
     aspectRatio?: string,
-    resolution?: string
+    resolution?: string,
   ): Promise<string> {
     const parts: Array<{
       text?: string;
@@ -164,7 +172,7 @@ export class GeminiProvider {
     }
 
     console.debug(
-      `Banana Studio: [${this.providerName}] Sending image generation request...`
+      `Banana Studio: [${this.providerName}] Sending image generation request...`,
     );
 
     const model = this.getImageModel();
@@ -180,7 +188,7 @@ export class GeminiProvider {
     try {
       const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
       console.debug(
-        `Banana Studio: Image generation timeout set to ${timeoutMs / 1000}s`
+        `Banana Studio: Image generation timeout set to ${timeoutMs / 1000}s`,
       );
       const response = await requestUrlWithTimeout(requestParams, timeoutMs);
       const data = response.json as GeminiResponse;
@@ -191,7 +199,7 @@ export class GeminiProvider {
       if (errMsg.startsWith("TIMEOUT:")) {
         const timeoutSec = parseInt(errMsg.split(":")[1]) / 1000;
         throw new Error(
-          `Image generation timed out after ${timeoutSec} seconds.`
+          `Image generation timed out after ${timeoutSec} seconds.`,
         );
       }
       this.handleError(error);
@@ -210,7 +218,7 @@ export class GeminiProvider {
       enabled: boolean;
       budgetTokens?: number;
       level?: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-    }
+    },
   ): Promise<{ content: string; thinking?: string }> {
     const model = this.getTextModel();
     const endpoint = this.getEndpoint(model);
@@ -249,7 +257,7 @@ export class GeminiProvider {
       }
       console.debug(
         `Banana Studio: [${this.providerName}] Multimodal Thinking config:`,
-        JSON.stringify(genConfig.thinkingConfig)
+        JSON.stringify(genConfig.thinkingConfig),
       );
     }
 
@@ -258,7 +266,7 @@ export class GeminiProvider {
     }
 
     console.debug(
-      `Banana Studio: [${this.providerName}] Sending multimodal chat request...`
+      `Banana Studio: [${this.providerName}] Sending multimodal chat request...`,
     );
 
     const requestParams: RequestUrlParam = {
@@ -311,13 +319,13 @@ export class GeminiProvider {
     const thinking = thinkingParts.map((p) => p.text).join("");
     // Extract thought signatures
     const thoughtSignature = parts.find(
-      (p) => p.thoughtSignature
+      (p) => p.thoughtSignature,
     )?.thoughtSignature;
 
     console.debug(
       `Banana Studio: [${this.providerName}] Received response (thinking: ${
         thinking.length > 0 ? "yes" : "no"
-      }, signature: ${thoughtSignature ? "yes" : "no"})`
+      }, signature: ${thoughtSignature ? "yes" : "no"})`,
     );
 
     return {
@@ -335,7 +343,7 @@ export class GeminiProvider {
   }
 
   private async parseGeminiImageResponse(
-    data: GeminiResponse
+    data: GeminiResponse,
   ): Promise<string> {
     const candidates = data.candidates;
     if (!candidates || candidates.length === 0) {
@@ -357,7 +365,7 @@ export class GeminiProvider {
         const base64Data = part.inlineData.data;
         console.debug(
           "Banana Studio: Gemini returned base64 image, mimeType:",
-          mimeType
+          mimeType,
         );
         return `data:${mimeType};base64,${base64Data}`;
       }
@@ -406,7 +414,7 @@ export class GeminiProvider {
         "Banana Studio: Fetched image, mimeType:",
         mimeType,
         "size:",
-        arrayBuffer.byteLength
+        arrayBuffer.byteLength,
       );
       return `data:${mimeType};base64,${base64Data}`;
     } catch (error: unknown) {
@@ -423,7 +431,7 @@ export class GeminiProvider {
       console.error(
         `Banana Studio: ${this.providerName} HTTP Error`,
         error.status,
-        errorBody
+        errorBody,
       );
       throw new Error(`HTTP ${error.status}: ${errorMessage}`);
     }
@@ -440,7 +448,7 @@ export class GeminiProvider {
       enabled: boolean;
       budgetTokens?: number;
       level?: "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
-    }
+    },
   ): AsyncGenerator<
     { content?: string; thinking?: string; thoughtSignature?: string },
     void,
@@ -478,7 +486,7 @@ export class GeminiProvider {
       }
       console.debug(
         `Banana Studio: [${this.providerName}] Thinking config:`,
-        JSON.stringify(genConfig.thinkingConfig)
+        JSON.stringify(genConfig.thinkingConfig),
       );
     }
 
@@ -487,7 +495,7 @@ export class GeminiProvider {
     }
 
     console.debug(
-      `Banana Studio: [${this.providerName}] Sending stream chat request...`
+      `Banana Studio: [${this.providerName}] Sending stream chat request...`,
     );
 
     try {
@@ -500,7 +508,7 @@ export class GeminiProvider {
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(
-          `${this.providerName} API Error: ${response.status} ${errorText}`
+          `${this.providerName} API Error: ${response.status} ${errorText}`,
         );
       }
 

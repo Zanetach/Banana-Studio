@@ -90,5 +90,9 @@
   "Image generated": "Image generated and inserted",
   "Max parallel tasks reached": "Maximum parallel image tasks ({max}) reached",
   "Image generation failed": "Image generation failed",
-  "Insert": "Insert"
+  "Insert": "Insert",
+  "Show all text models (Advanced)": "Show all text models (Advanced)",
+  "By default, only 2 recommended text models are shown: gpt-4o-mini, gemini-2.5-flash": "By default, only 2 recommended text models are shown: gpt-4o-mini, gemini-2.5-flash",
+  "Image save location": "Image save location",
+  "Specify a folder path in vault, e.g. Assets/AI (leave empty to save next to current note)": "Specify a folder path in vault, e.g. Assets/AI (leave empty to save next to current note)"
 }

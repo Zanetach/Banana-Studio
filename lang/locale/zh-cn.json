@@ -90,5 +90,9 @@
   "Image generated": "图片已生成并插入",
   "Max parallel tasks reached": "已达到最大并行任务数 ({max})",
   "Image generation failed": "图片生成失败",
-  "Insert": "插入"
+  "Insert": "插入",
+  "Show all text models (Advanced)": "显示全部文本模型（高级）",
+  "By default, only 2 recommended text models are shown: gpt-4o-mini, gemini-2.5-flash": "默认仅显示 2 个推荐文本模型：gpt-4o-mini、gemini-2.5-flash",
+  "Image save location": "图片保存位置",
+  "Specify a folder path in vault, e.g. Assets/AI (leave empty to save next to current note)": "填写 vault 内文件夹路径，如：Assets/AI（留空则保存到当前笔记同目录）"
 }

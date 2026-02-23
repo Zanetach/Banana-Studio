@@ -31,35 +31,43 @@ export class CanvasAISettingTab extends PluginSettingTab {
   }
 
   /**
-   * Fetch models from API (OpenRouter or Yunwu based on provider)
-   * For Gemini and AntigravityTools, use hardcoded model list
+   * Fetch models from API (OpenRouter) or load hardcoded lists (Gemini/OpenAI)
    */
   private async fetchModels(): Promise<void> {
     if (this.isFetching) return;
 
     const provider = this.plugin.settings.apiProvider;
-    const isYunwu = provider === "yunwu";
-    const isGemini = provider === "gemini";
-    const isGptGod = provider === "gptgod";
-    const isAntigravityTools = provider === "antigravitytools";
-
-    // Gemini and AntigravityTools use hardcoded model list (no API endpoint)
-    if (isGemini || isAntigravityTools) {
+    const isGemini = provider === "gemini"; // Gemini uses hardcoded model list (no API endpoint)
+    const isOpenAI = provider === "openai"; // OpenAI uses curated model list
+    const isZenMux = provider === "zenmux"; // ZenMux uses curated model list
+    if (isGemini) {
       this.modelCache = this.getGeminiHardcodedModels();
       this.modelsFetched = true;
-      const source = isGemini ? "Gemini" : "AntigravityTools";
       console.debug(
-        `Banana Studio Settings: Loaded ${this.modelCache.length} hardcoded ${source} models`,
+        `Banana Studio Settings: Loaded ${this.modelCache.length} hardcoded Gemini models`,
       );
       void this.display();
       return;
     }
-
-    const apiKey = isYunwu
-      ? this.plugin.settings.yunwuApiKey
-      : isGptGod
-        ? this.plugin.settings.gptGodApiKey
-        : this.plugin.settings.openRouterApiKey;
+    if (isOpenAI) {
+      this.modelCache = this.getOpenAIHardcodedModels();
+      this.modelsFetched = true;
+      console.debug(
+        `Banana Studio Settings: Loaded ${this.modelCache.length} hardcoded OpenAI models`,
+      );
+      void this.display();
+      return;
+    }
+    if (isZenMux) {
+      this.modelCache = this.getZenMuxHardcodedModels();
+      this.modelsFetched = true;
+      console.debug(
+        `Banana Studio Settings: Loaded ${this.modelCache.length} hardcoded ZenMux models`,
+      );
+      void this.display();
+      return;
+    }
+    const apiKey = this.plugin.settings.openRouterApiKey;
 
     if (!apiKey) {
       console.debug("Banana Studio Settings: No API key, skipping model fetch");
@@ -68,20 +76,10 @@ export class CanvasAISettingTab extends PluginSettingTab {
 
     this.isFetching = true;
     try {
-      let endpoint: string;
-      let headers: Record<string, string>;
-
-      if (isYunwu) {
-        // Yunwu uses same OpenAI-compatible models endpoint
-        endpoint = `${this.plugin.settings.yunwuBaseUrl || "https://yunwu.ai"}/v1/models`;
-        headers = { Authorization: `Bearer ${apiKey}` };
-      } else if (isGptGod) {
-        endpoint = `${this.plugin.settings.gptGodBaseUrl || "https://api.gptgod.online"}/v1/models`;
-        headers = { Authorization: `Bearer ${apiKey}` };
-      } else {
-        endpoint = "https://openrouter.ai/api/v1/models";
-        headers = { Authorization: `Bearer ${apiKey}` };
-      }
+      const endpoint = "https://openrouter.ai/api/v1/models";
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${apiKey}`,
+      };
 
       const response = await requestUrl({
         url: endpoint,
@@ -105,7 +103,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
 
       this.modelsFetched = true;
       console.debug(
-        `Banana Studio Settings: Fetched ${this.modelCache.length} models from ${isYunwu ? "Yunwu" : "OpenRouter"}`,
+        `Banana Studio Settings: Fetched ${this.modelCache.length} models from OpenRouter`,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -161,17 +159,16 @@ export class CanvasAISettingTab extends PluginSettingTab {
         name: "Gemini 2.5 Pro Preview 05-06",
         outputModalities: ["text"],
       },
+      {
+        id: "google/gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview",
+        outputModalities: ["text", "image"],
+      },
       // Gemini 3 series (Image generation)
       {
         id: "gemini-3-pro-image-preview",
         name: "Gemini 3 Pro Image Preview",
         outputModalities: ["image"],
-      },
-      // GPTGod default
-      {
-        id: "gpt-4-gizmo-g-2fkFE8rbu",
-        name: "GPT-4 Gizmo",
-        outputModalities: ["text"],
       },
       // Legacy naming (for backward compatibility)
       {
@@ -183,6 +180,43 @@ export class CanvasAISettingTab extends PluginSettingTab {
         id: "gemini-flash-latest-nothinking",
         name: "Gemini Flash Latest (No Thinking)",
         outputModalities: ["text"],
+      },
+    ];
+  }
+
+  private getOpenAIHardcodedModels(): OpenRouterModel[] {
+    return [
+      { id: "gpt-5", name: "GPT-5", outputModalities: ["text"] },
+      { id: "gpt-5-mini", name: "GPT-5 Mini", outputModalities: ["text"] },
+      { id: "gpt-5-nano", name: "GPT-5 Nano", outputModalities: ["text"] },
+      { id: "gpt-4.1", name: "GPT-4.1", outputModalities: ["text"] },
+      { id: "gpt-4o", name: "GPT-4o", outputModalities: ["text"] },
+      { id: "gpt-4o-mini", name: "GPT-4o Mini", outputModalities: ["text"] },
+      { id: "gpt-image-1", name: "GPT Image 1", outputModalities: ["image"] },
+    ];
+  }
+
+  private getZenMuxHardcodedModels(): OpenRouterModel[] {
+    return [
+      {
+        id: "google/gemini-2.5-flash",
+        name: "Gemini 2.5 Flash (ZenMux)",
+        outputModalities: ["text"],
+      },
+      {
+        id: "google/gemini-2.5-pro",
+        name: "Gemini 2.5 Pro (ZenMux)",
+        outputModalities: ["text"],
+      },
+      {
+        id: "google/gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro Preview (ZenMux)",
+        outputModalities: ["text", "image"],
+      },
+      {
+        id: "google/gemini-3-pro-image-preview",
+        name: "Gemini 3 Pro Image Preview (ZenMux)",
+        outputModalities: ["image"],
       },
     ];
   }
@@ -199,6 +233,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
     "dall-e",
     "midjourney",
   ];
+  private static RECOMMENDED_TEXT_MODELS = ["gpt-4o-mini", "gemini-2.5-flash"];
 
   /**
    * Check if model version meets minimum requirements
@@ -284,29 +319,21 @@ export class CanvasAISettingTab extends PluginSettingTab {
   }
 
   /**
-   * Get models that support text output, filtered by keywords
-   * For Yunwu: only filter by keywords (no outputModalities check)
-   * Excludes non-text models (audio, tts, image, etc.)
-   * Filters out old versions (GPT < 4.0, Gemini < 2.5)
+   * Get models that support text output
    */
   private getTextModels(): OpenRouterModel[] {
     const provider = this.plugin.settings.apiProvider;
-    const isYunwu = provider === "yunwu";
     const isGemini = provider === "gemini";
-    const isGptGod = provider === "gptgod";
+    const isOpenAI = provider === "openai";
+    const isZenMux = provider === "zenmux";
+
+    if (isOpenAI || isZenMux) {
+      return this.modelCache.filter((m) => m.outputModalities.includes("text"));
+    }
 
     const filtered = this.modelCache.filter((m) => {
-      const idLower = m.id.toLowerCase();
-
-      // For OpenRouter/Yunwu/GPTGod, must support text output; for Gemini, skip this check (hardcoded)
-      // Note: GPTGod might not return modalities, so we treat it like Yunwu (relaxed check)
-      if (
-        !isYunwu &&
-        !isGemini &&
-        !isGptGod &&
-        !m.outputModalities.includes("text")
-      )
-        return false;
+      const idLower = m.id.toLowerCase(); // For OpenRouter, must support text output; for Gemini, skip this check (hardcoded)
+      if (!isGemini && !m.outputModalities.includes("text")) return false;
 
       // Exclude non-text models by keywords
       if (
@@ -330,36 +357,52 @@ export class CanvasAISettingTab extends PluginSettingTab {
       return this.meetsMinimumVersion(m.id);
     });
 
-    // Sort models
-    return this.sortModels(filtered);
+    const sorted = this.sortModels(filtered);
+    if (this.plugin.settings.showAllTextModelsInSettings) {
+      return sorted;
+    }
+    return this.pickRecommendedTextModels(sorted);
+  }
+
+  private pickRecommendedTextModels(
+    models: OpenRouterModel[],
+  ): OpenRouterModel[] {
+    const byId = new Map(models.map((m) => [m.id, m] as const));
+    const selected: OpenRouterModel[] = [];
+    for (const id of CanvasAISettingTab.RECOMMENDED_TEXT_MODELS) {
+      const hit = byId.get(id);
+      if (hit) selected.push(hit);
+    }
+    if (selected.length > 0) return selected;
+    return models.slice(0, 2);
   }
 
   /**
-   * Get models that support image output, filtered by keywords
-   * For Yunwu: only filter by keywords (no outputModalities check)
-   * Must contain BOTH 'gemini' AND 'image' in the model ID
-   * Filters out old versions (Gemini < 2.5)
+   * Get models that support image output
    */
   private getImageModels(): OpenRouterModel[] {
     const provider = this.plugin.settings.apiProvider;
-    const isYunwu = provider === "yunwu";
     const isGemini = provider === "gemini";
-    const isGptGod = provider === "gptgod";
+    const isOpenAI = provider === "openai";
+    const isZenMux = provider === "zenmux";
+
+    if (isOpenAI || isZenMux) {
+      return this.modelCache.filter((m) =>
+        m.outputModalities.includes("image"),
+      );
+    }
 
     const filtered = this.modelCache.filter((m) => {
-      const idLower = m.id.toLowerCase();
+      const idLower = m.id.toLowerCase(); // For OpenRouter, must support image output; for Gemini, skip this check
+      if (!isGemini && !m.outputModalities.includes("image")) return false;
 
-      // For OpenRouter/Yunwu/GPTGod, must support image output; for Gemini, skip this check
+      // Must be Gemini family and image-capable:
+      // - standard image models include "image"
+      // - Gemini 3.1 Pro Preview is also allowed as image-capable by request
       if (
-        !isYunwu &&
-        !isGemini &&
-        !isGptGod &&
-        !m.outputModalities.includes("image")
-      )
-        return false;
-
-      // Must contain both 'gemini' AND 'image' (case-insensitive)
-      if (!idLower.includes("gemini") || !idLower.includes("image")) {
+        !idLower.includes("gemini") ||
+        (!idLower.includes("image") && !idLower.includes("3.1-pro-preview"))
+      ) {
         return false;
       }
 
@@ -388,13 +431,16 @@ export class CanvasAISettingTab extends PluginSettingTab {
         dropdown
 
           .addOption("gemini", t("Google Gemini"))
+          .addOption("openai", "OpenAI")
+          .addOption("zenmux", "ZenMux")
 
           .addOption("openrouter", t("OpenRouter"))
-          .addOption("yunwu", t("Yunwu"))
-
-          .addOption("gptgod", t("GPTGod"))
-          .addOption("antigravitytools", t("AntigravityTools"))
-          .setValue(this.plugin.settings.apiProvider)
+          .setValue(
+            this.plugin.settings.apiProvider === "yunwu" ||
+              this.plugin.settings.apiProvider === "antigravitytools"
+              ? "openrouter"
+              : this.plugin.settings.apiProvider,
+          )
           .onChange(async (value) => {
             this.plugin.settings.apiProvider = value as ApiProvider;
             await this.plugin.saveSettings();
@@ -408,12 +454,20 @@ export class CanvasAISettingTab extends PluginSettingTab {
           }),
       );
 
-    const provider = this.plugin.settings.apiProvider;
-    const isYunwu = provider === "yunwu";
+    const rawProvider = this.plugin.settings.apiProvider;
+    const provider =
+      rawProvider === "antigravitytools" || rawProvider === "yunwu"
+        ? "openrouter"
+        : rawProvider;
+
+    if (provider !== rawProvider) {
+      this.plugin.settings.apiProvider = provider;
+      void this.plugin.saveSettings();
+    }
 
     const isGemini = provider === "gemini";
-    const isGptGod = provider === "gptgod";
-    const isAntigravityTools = provider === "antigravitytools";
+    const isOpenAI = provider === "openai";
+    const isZenMux = provider === "zenmux";
 
     // ========== Configuration Section ==========
     if (provider === "openrouter") {
@@ -446,32 +500,59 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
-    } else if (provider === "yunwu") {
-      const yunwuKeySetting = new Setting(containerEl)
-        .setName(t("Yunwu API key"))
-        .setDesc(t("Enter your Yunwu API key"))
+    } else if (provider === "openai") {
+      const openaiKeySetting = new Setting(containerEl)
+        .setName("OpenAI API key")
+        .setDesc("Enter your OpenAI API key")
         .addText((text) =>
           text
-
-            .setPlaceholder(t("Placeholder API key"))
-            .setValue(this.plugin.settings.yunwuApiKey)
+            .setPlaceholder("sk-...")
+            .setValue(this.plugin.settings.openAIApiKey)
             .onChange(async (value) => {
-              this.plugin.settings.yunwuApiKey = value;
+              this.plugin.settings.openAIApiKey = value;
               await this.plugin.saveSettings();
             }),
         );
 
-      this.addTestButton(yunwuKeySetting.controlEl, containerEl);
+      this.addTestButton(openaiKeySetting.controlEl, containerEl);
 
       new Setting(containerEl)
         .setName(t("API base URL"))
-        .setDesc(t("API base URL"))
+        .setDesc("OpenAI-compatible base URL")
         .addText((text) =>
           text
-            .setPlaceholder(t("Placeholder URL Yunwu"))
-            .setValue(this.plugin.settings.yunwuBaseUrl)
+            .setPlaceholder("https://api.openai.com")
+            .setValue(this.plugin.settings.openAIBaseUrl)
             .onChange(async (value) => {
-              this.plugin.settings.yunwuBaseUrl = value;
+              this.plugin.settings.openAIBaseUrl = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+    } else if (provider === "zenmux") {
+      const zenmuxKeySetting = new Setting(containerEl)
+        .setName("ZenMux API key")
+        .setDesc("Enter your ZenMux API key")
+        .addText((text) =>
+          text
+            .setPlaceholder("zm_...")
+            .setValue(this.plugin.settings.zenmuxApiKey)
+            .onChange(async (value) => {
+              this.plugin.settings.zenmuxApiKey = value;
+              await this.plugin.saveSettings();
+            }),
+        );
+
+      this.addTestButton(zenmuxKeySetting.controlEl, containerEl);
+
+      new Setting(containerEl)
+        .setName(t("API base URL"))
+        .setDesc("ZenMux Vertex AI endpoint")
+        .addText((text) =>
+          text
+            .setPlaceholder("https://zenmux.ai/api/vertex-ai")
+            .setValue(this.plugin.settings.zenmuxBaseUrl)
+            .onChange(async (value) => {
+              this.plugin.settings.zenmuxBaseUrl = value;
               await this.plugin.saveSettings();
             }),
         );
@@ -504,82 +585,20 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
-    } else if (provider === "gptgod") {
-      const gptGodKeySetting = new Setting(containerEl)
-        .setName(t("GPTGod API key"))
-        .setDesc(t("Enter your GPTGod API key"))
-        .addText((text) =>
-          text
-
-            .setPlaceholder(t("Placeholder API key"))
-            .setValue(this.plugin.settings.gptGodApiKey)
-            .onChange(async (value) => {
-              this.plugin.settings.gptGodApiKey = value;
-              await this.plugin.saveSettings();
-            }),
-        );
-
-      this.addTestButton(gptGodKeySetting.controlEl, containerEl);
-
-      new Setting(containerEl)
-        .setName(t("API base URL"))
-        .setDesc(t("API base URL"))
-        .addText((text) =>
-          text
-
-            .setPlaceholder(t("Placeholder URL"))
-            .setValue(this.plugin.settings.gptGodBaseUrl)
-            .onChange(async (value) => {
-              this.plugin.settings.gptGodBaseUrl = value;
-              await this.plugin.saveSettings();
-              this.plugin.apiManager?.updateSettings(this.plugin.settings);
-            }),
-        );
-    } else if (provider === "antigravitytools") {
-      const antigravityKeySetting = new Setting(containerEl)
-        .setName(t("AntigravityTools API key"))
-        .setDesc(t("Enter your AntigravityTools API key"))
-        .addText((text) =>
-          text
-            .setPlaceholder(t("Placeholder API key"))
-            .setValue(this.plugin.settings.antigravityToolsApiKey)
-            .onChange(async (value) => {
-              this.plugin.settings.antigravityToolsApiKey = value;
-              await this.plugin.saveSettings();
-            }),
-        );
-
-      this.addTestButton(antigravityKeySetting.controlEl, containerEl);
-
-      new Setting(containerEl)
-        .setName(t("API base URL"))
-        .setDesc(t("API base URL"))
-        .addText((text) =>
-          text
-            .setPlaceholder("http://127.0.0.1:8045")
-            .setValue(this.plugin.settings.antigravityToolsBaseUrl)
-            .onChange(async (value) => {
-              this.plugin.settings.antigravityToolsBaseUrl = value;
-              await this.plugin.saveSettings();
-              this.plugin.apiManager?.updateSettings(this.plugin.settings);
-            }),
-        );
     }
 
     // ========== 模型配置区域 ==========
     new Setting(containerEl).setHeading().setName(t("Model configuration"));
 
     // Fetch models if not already fetched (Non-blocking)
-    // For Gemini, use hardcoded list; for OpenRouter/Yunwu, fetch from API
+    // For Gemini/OpenAI, use hardcoded list; for OpenRouter, fetch from API
     const apiKey = isGemini
       ? this.plugin.settings.geminiApiKey
-      : isYunwu
-        ? this.plugin.settings.yunwuApiKey
-        : isGptGod
-          ? this.plugin.settings.gptGodApiKey
-          : isAntigravityTools
-            ? this.plugin.settings.antigravityToolsApiKey
-            : this.plugin.settings.openRouterApiKey;
+      : isOpenAI
+        ? this.plugin.settings.openAIApiKey
+        : isZenMux
+          ? this.plugin.settings.zenmuxApiKey
+          : this.plugin.settings.openRouterApiKey;
     if (!this.modelsFetched && apiKey && !this.isFetching) {
       setTimeout(() => void this.fetchModels(), 0);
     }
@@ -591,13 +610,11 @@ export class CanvasAISettingTab extends PluginSettingTab {
     } else if (this.modelsFetched) {
       const source = isGemini
         ? "Gemini (Hardcoded)"
-        : isYunwu
-          ? "Yunwu"
-          : isGptGod
-            ? "GPTGod"
-            : isAntigravityTools
-              ? "AntigravityTools (Hardcoded)"
-              : "OpenRouter";
+        : isOpenAI
+          ? "OpenAI (Hardcoded)"
+          : isZenMux
+            ? "ZenMux (Hardcoded)"
+            : "OpenRouter";
       statusText = t("Loaded models", {
         count: this.modelCache.length,
         textCount: this.getTextModels().length,
@@ -610,8 +627,8 @@ export class CanvasAISettingTab extends PluginSettingTab {
       .setName(t("Model list"))
       .setDesc(statusText);
 
-    // Only show refresh button for OpenRouter/Yunwu (not Gemini or AntigravityTools)
-    if (!isGemini && !isAntigravityTools) {
+    // Only show refresh button for OpenRouter (Gemini/OpenAI use hardcoded list)
+    if (!isGemini && !isOpenAI && !isZenMux) {
       const refreshBtn = refreshSetting.controlEl.createEl("button", {
         text: this.isFetching ? t("Refreshing...") : t("Refresh model list"),
         cls: "canvas-ai-refresh-btn",
@@ -628,6 +645,23 @@ export class CanvasAISettingTab extends PluginSettingTab {
       });
     }
 
+    new Setting(containerEl)
+      .setName(t("Show all text models (Advanced)"))
+      .setDesc(
+        t(
+          "By default, only 2 recommended text models are shown: gpt-4o-mini, gemini-2.5-flash",
+        ),
+      )
+      .addToggle((toggle) =>
+        toggle
+          .setValue(!!this.plugin.settings.showAllTextModelsInSettings)
+          .onChange(async (value) => {
+            this.plugin.settings.showAllTextModelsInSettings = value;
+            await this.plugin.saveSettings();
+            this.display();
+          }),
+      );
+
     // ========== Quick Switch Models (Compact Display) ==========
     this.renderQuickSwitchCompact(containerEl);
 
@@ -635,31 +669,25 @@ export class CanvasAISettingTab extends PluginSettingTab {
     // ========== Image Model Setting ==========
     const imageModelKey = isGemini
       ? "geminiImageModel"
-      : isYunwu
-        ? "yunwuImageModel"
-        : isGptGod
-          ? "gptGodImageModel"
-          : isAntigravityTools
-            ? "antigravityToolsImageModel"
-            : "openRouterImageModel";
+      : isOpenAI
+        ? "openAIImageModel"
+        : isZenMux
+          ? "zenmuxImageModel"
+          : "openRouterImageModel";
     const imageCustomKey = isGemini
       ? "geminiUseCustomImageModel"
-      : isYunwu
-        ? "yunwuUseCustomImageModel"
-        : isGptGod
-          ? "gptGodUseCustomImageModel"
-          : isAntigravityTools
-            ? "antigravityToolsUseCustomImageModel"
-            : "openRouterUseCustomImageModel";
+      : isOpenAI
+        ? "openAIUseCustomImageModel"
+        : isZenMux
+          ? "zenmuxUseCustomImageModel"
+          : "openRouterUseCustomImageModel";
     const imagePlaceholder = isGemini
       ? "gemini-3-pro-image-preview"
-      : isYunwu
-        ? "gemini-3-pro-image-preview"
-        : isGptGod
-          ? "gemini-3-pro-image-preview"
-          : isAntigravityTools
-            ? "gemini-3-pro-image"
-            : "google/gemini-3-pro-image-preview";
+      : isOpenAI
+        ? "gpt-image-1"
+        : isZenMux
+          ? "google/gemini-3-pro-image-preview"
+          : "google/gemini-3-pro-image-preview";
 
     this.renderModelSetting(containerEl, {
       name: t("Image generation model"),
@@ -703,6 +731,24 @@ export class CanvasAISettingTab extends PluginSettingTab {
               this.plugin.settings.imageMaxSize = num;
               await this.plugin.saveSettings();
             }
+          })
+          .inputEl.addClass("canvas-ai-small-input"),
+      );
+
+    new Setting(containerEl)
+      .setName(t("Image save location"))
+      .setDesc(
+        t(
+          "Specify a folder path in vault, e.g. Assets/AI (leave empty to save next to current note)",
+        ),
+      )
+      .addText((text) =>
+        text
+          .setPlaceholder("Assets/AI")
+          .setValue(this.plugin.settings.imageSaveFolder || "")
+          .onChange(async (value) => {
+            this.plugin.settings.imageSaveFolder = value.trim();
+            await this.plugin.saveSettings();
           })
           .inputEl.addClass("canvas-ai-small-input"),
       );
@@ -1005,7 +1051,8 @@ export class CanvasAISettingTab extends PluginSettingTab {
 
         // Add all models from API
         for (const model of models) {
-          dropdown.addOption(model.id, `${model.name} (${model.id})`);
+          // Keep option text concise to avoid oversized dropdown rows.
+          dropdown.addOption(model.id, model.name || model.id);
         }
 
         dropdown.setValue(currentValue || "");
@@ -1013,6 +1060,32 @@ export class CanvasAISettingTab extends PluginSettingTab {
           (this.plugin.settings[modelKey] as string) = value;
           await this.plugin.saveSettings();
         });
+
+        // Explicit keyboard up/down selection for model dropdowns.
+        dropdown.selectEl.addEventListener(
+          "keydown",
+          (event: KeyboardEvent) => {
+            if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+            event.preventDefault();
+
+            const options = Array.from(dropdown.selectEl.options);
+            const currentIndex = dropdown.selectEl.selectedIndex;
+            if (options.length === 0 || currentIndex < 0) return;
+
+            const nextIndex =
+              event.key === "ArrowDown"
+                ? Math.min(options.length - 1, currentIndex + 1)
+                : Math.max(0, currentIndex - 1);
+            if (nextIndex === currentIndex) return;
+
+            const nextValue = options[nextIndex].value;
+            dropdown.setValue(nextValue);
+            void (async () => {
+              (this.plugin.settings[modelKey] as string) = nextValue;
+              await this.plugin.saveSettings();
+            })();
+          },
+        );
       });
     }
 

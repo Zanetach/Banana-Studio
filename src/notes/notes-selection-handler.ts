@@ -7,7 +7,7 @@ import { App, Editor, MarkdownView, Notice, TFile } from "obsidian";
 import type CanvasAIPlugin from "../../main";
 import { SelectionContext } from "../types";
 import { extractDocumentImages, saveImageToVault } from "../utils/image-utils";
-import { t } from "../../lang/helpers";
+import { isZhLocale, t } from "../../lang/helpers";
 import {
   SideBarCoPilotView,
   VIEW_TYPE_SIDEBAR_COPILOT,
@@ -37,6 +37,10 @@ export class NotesSelectionHandler {
       this.app,
       this.plugin.settings,
     );
+  }
+
+  private tr(zh: string, en: string): string {
+    return isZhLocale() ? zh : en;
   }
 
   private getSidebarView(): SideBarCoPilotView | null {
@@ -74,12 +78,12 @@ export class NotesSelectionHandler {
     };
     if (provider === "openrouter") {
       localSettings.openRouterImageModel = modelId;
+    } else if (provider === "openai") {
+      localSettings.openAIImageModel = modelId;
+    } else if (provider === "zenmux") {
+      localSettings.zenmuxImageModel = modelId;
     } else if (provider === "gemini") {
       localSettings.geminiImageModel = modelId;
-    } else if (provider === "yunwu") {
-      localSettings.yunwuImageModel = modelId;
-    } else if (provider === "gptgod") {
-      localSettings.gptGodImageModel = modelId;
     }
     return new ApiManager(localSettings);
   }
@@ -180,6 +184,7 @@ export class NotesSelectionHandler {
   public async handleImageGeneration(
     prompt: string,
     manualContext?: NotesSelectionContext | null,
+    extraInputImages: { base64: string; mimeType: string; role: string }[] = [],
   ): Promise<GeneratedImageCandidate> {
     let context = manualContext || this.lastContext;
     let file: TFile;
@@ -226,17 +231,24 @@ export class NotesSelectionHandler {
     }
 
     const contextText = selectedText || "";
-    const inputImages = await extractDocumentImages(
-      this.app,
-      contextText,
-      file.path,
-      this.plugin.settings,
-    );
-    const imagesWithRoles = inputImages.map((img) => ({
-      base64: img.base64,
-      mimeType: img.mimeType,
-      role: "reference",
-    }));
+    // 当侧边栏已显式上传参考图时，强制只使用上传图，不混入文档内其他参考图。
+    const inputImages =
+      extraInputImages.length > 0
+        ? []
+        : await extractDocumentImages(
+            this.app,
+            contextText,
+            file.path,
+            this.plugin.settings,
+          );
+    const imagesWithRoles = [
+      ...inputImages.map((img) => ({
+        base64: img.base64,
+        mimeType: img.mimeType,
+        role: "reference",
+      })),
+      ...extraInputImages,
+    ];
 
     const candidate = await this.imageTaskManager.startTask(
       instruction,
@@ -245,7 +257,13 @@ export class NotesSelectionHandler {
       imageOptions,
       localApiManager,
       file,
-      (base64, f) => saveImageToVault(this.app.vault, base64, f),
+      (base64, f) =>
+        saveImageToVault(
+          this.app.vault,
+          base64,
+          f,
+          this.plugin.settings.imageSaveFolder,
+        ),
     );
 
     return candidate;
@@ -258,30 +276,49 @@ export class NotesSelectionHandler {
   public async insertImageCandidate(
     candidate: GeneratedImageCandidate,
   ): Promise<boolean> {
-    const activeFile = this.app.workspace.getActiveFile();
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    const activeFile = activeView?.file || this.app.workspace.getActiveFile();
     if (!activeFile || activeFile.extension !== "md") {
-      new Notice(t("No active file"));
-      return false;
-    }
-
-    if (activeFile.path !== candidate.notePath) {
       new Notice(
-        "Active note changed. Please switch back to the original note before inserting.",
+        this.tr(
+          "请先激活一个 Markdown 笔记，再执行插入",
+          "Please activate a Markdown note before inserting.",
+        ),
       );
       return false;
     }
 
-    const embed = `![[${candidate.fileName}]]`;
-    const view = this.findMarkdownViewByPath(activeFile.path);
+    const targetFile = activeFile;
+    const normalizedImagePath = candidate.filePath.replace(/^\/+/, "");
+    const imageAbstract =
+      this.app.vault.getAbstractFileByPath(normalizedImagePath);
+    if (!(imageAbstract instanceof TFile)) {
+      new Notice(
+        this.tr(
+          `找不到图片文件：${normalizedImagePath}`,
+          `Image file not found: ${normalizedImagePath}`,
+        ),
+      );
+      return false;
+    }
+
+    const linkText = this.app.metadataCache.fileToLinktext(
+      imageAbstract,
+      targetFile.path,
+      false,
+    );
+    const embed = `![[${linkText}]]`;
+    const view = this.findMarkdownViewByPath(targetFile.path) || activeView;
+
     if (view?.editor) {
       const cursor = view.editor.getCursor();
       view.editor.replaceRange(`\n${embed}\n`, cursor);
       return true;
     }
 
-    const text = await this.app.vault.read(activeFile);
+    const text = await this.app.vault.read(targetFile);
     const suffix = text.endsWith("\n") ? "" : "\n";
-    await this.app.vault.modify(activeFile, `${text}${suffix}${embed}\n`);
+    await this.app.vault.modify(targetFile, `${text}${suffix}${embed}\n`);
     return true;
   }
 
@@ -289,7 +326,8 @@ export class NotesSelectionHandler {
    * 删除候选图片文件（用于手动丢弃/过期清理）
    */
   public async removeCandidateImageFile(filePath: string): Promise<void> {
-    const abstract = this.app.vault.getAbstractFileByPath(filePath);
+    const normalized = filePath.replace(/^\/+/, "");
+    const abstract = this.app.vault.getAbstractFileByPath(normalized);
     if (abstract instanceof TFile) {
       await this.app.vault.delete(abstract);
     }
@@ -318,6 +356,10 @@ export class NotesSelectionHandler {
    */
   public refreshFromSettings(): void {
     this.imageTaskManager.updateSettings(this.plugin.settings);
+  }
+
+  public cancelImageTasks(): void {
+    this.imageTaskManager.cancelAllTasks();
   }
 
   public destroy(): void {

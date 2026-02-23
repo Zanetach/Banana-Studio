@@ -1,44 +1,47 @@
-import { moment } from 'obsidian';
-import en from './locale/en.json';
-import zhCN from './locale/zh-cn.json';
+import { moment } from "obsidian";
+import en from "./locale/en.json";
+import zhCN from "./locale/zh-cn.json";
 
 // Define the type of our keys based on the English file (source of truth)
 export type LocaleKeys = keyof typeof en;
 
 const localeMap: Record<string, Partial<typeof en>> = {
-    'en': en,
-    'zh-cn': zhCN,
-    'zh': zhCN,
+  en: en,
+  "zh-cn": zhCN,
+  zh: zhCN,
 };
 
-// Get the current locale from Obsidian (via moment)
-const currentLocale = moment.locale();
+function resolveLang(): string {
+  let lang = moment.locale();
+  if (lang.startsWith("zh")) {
+    lang = "zh-cn";
+  }
+  if (!localeMap[lang]) {
+    lang = "en";
+  }
+  return lang;
+}
+
+export function isZhLocale(): boolean {
+  return resolveLang() === "zh-cn";
+}
 
 /**
  * Get a localized string
  */
-export function t(key: LocaleKeys, params?: Record<string, string | number>): string {
-    // Determine language
-    let lang = currentLocale;
+export function t(
+  key: LocaleKeys,
+  params?: Record<string, string | number>,
+): string {
+  const lang = resolveLang();
+  const dict = localeMap[lang];
+  let str = dict[key] || en[key] || key;
 
-    // Simplistic mapping: if it starts with zh, use zh-cn
-    if (lang.startsWith('zh')) {
-        lang = 'zh-cn';
-    }
+  if (params) {
+    Object.keys(params).forEach((k) => {
+      str = str.replace(new RegExp(`\\{${k}\\}`, "g"), String(params[k]));
+    });
+  }
 
-    // Default to English if locale not found
-    if (!localeMap[lang]) {
-        lang = 'en';
-    }
-
-    const dict = localeMap[lang];
-    let str = dict[key] || en[key] || key;
-
-    if (params) {
-        Object.keys(params).forEach(k => {
-            str = str.replace(new RegExp(`\\{${k}\\}`, 'g'), String(params[k]));
-        });
-    }
-
-    return str;
+  return str;
 }

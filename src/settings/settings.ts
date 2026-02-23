@@ -7,8 +7,9 @@
 export type ApiProvider =
   | "openrouter"
   | "yunwu"
+  | "openai"
+  | "zenmux"
   | "gemini"
-  | "gptgod"
   | "antigravitytools";
 
 // ========== Quick Switch Model ==========
@@ -38,13 +39,29 @@ export interface CanvasAISettings {
   openRouterUseCustomTextModel: boolean;
   openRouterUseCustomImageModel: boolean;
 
-  // Yunwu settings
-  yunwuApiKey: string;
-  yunwuBaseUrl: string;
-  yunwuTextModel: string;
-  yunwuImageModel: string;
-  yunwuUseCustomTextModel: boolean;
-  yunwuUseCustomImageModel: boolean;
+  // OpenAI settings
+  openAIApiKey: string;
+  openAIBaseUrl: string;
+  openAITextModel: string;
+  openAIImageModel: string;
+  openAIUseCustomTextModel: boolean;
+  openAIUseCustomImageModel: boolean;
+
+  // ZenMux settings
+  zenmuxApiKey: string;
+  zenmuxBaseUrl: string;
+  zenmuxTextModel: string;
+  zenmuxImageModel: string;
+  zenmuxUseCustomTextModel: boolean;
+  zenmuxUseCustomImageModel: boolean;
+
+  // Legacy Yunwu settings (for migration only)
+  yunwuApiKey?: string;
+  yunwuBaseUrl?: string;
+  yunwuTextModel?: string;
+  yunwuImageModel?: string;
+  yunwuUseCustomTextModel?: boolean;
+  yunwuUseCustomImageModel?: boolean;
 
   // Google Gemini settings
   geminiApiKey: string;
@@ -53,14 +70,6 @@ export interface CanvasAISettings {
   geminiImageModel: string;
   geminiUseCustomTextModel: boolean;
   geminiUseCustomImageModel: boolean;
-
-  // GPTGod settings
-  gptGodApiKey: string;
-  gptGodBaseUrl: string;
-  gptGodTextModel: string;
-  gptGodImageModel: string;
-  gptGodUseCustomTextModel: boolean;
-  gptGodUseCustomImageModel: boolean;
 
   // AntigravityTools settings
   antigravityToolsApiKey: string;
@@ -79,13 +88,18 @@ export interface CanvasAISettings {
   // Image compression settings
   imageCompressionQuality: number; // WebP compression quality (0-100)
   imageMaxSize: number; // Max width/height for WebP output
+  imageSaveFolder: string; // 生成图片保存目录（vault 内相对路径）
 
   // Image generation defaults (palette state)
   defaultAspectRatio: string;
   defaultResolution: string;
+  defaultImageCount: number;
+  sidebarDraftPrompt: string;
+  sidebarSelectedPresetId: string;
 
   // Debug mode
   debugMode: boolean;
+  showAllTextModelsInSettings: boolean;
 
   // System prompts
   imageSystemPrompt: string;
@@ -115,12 +129,19 @@ export const DEFAULT_SETTINGS: CanvasAISettings = {
   openRouterUseCustomTextModel: false,
   openRouterUseCustomImageModel: false,
 
-  yunwuApiKey: "",
-  yunwuBaseUrl: "https://yunwu.ai",
-  yunwuTextModel: "gemini-2.5-flash",
-  yunwuImageModel: "gemini-3-pro-image-preview",
-  yunwuUseCustomTextModel: false,
-  yunwuUseCustomImageModel: false,
+  openAIApiKey: "",
+  openAIBaseUrl: "https://api.openai.com",
+  openAITextModel: "gpt-4o-mini",
+  openAIImageModel: "gpt-image-1",
+  openAIUseCustomTextModel: false,
+  openAIUseCustomImageModel: false,
+
+  zenmuxApiKey: "",
+  zenmuxBaseUrl: "https://zenmux.ai/api/vertex-ai",
+  zenmuxTextModel: "google/gemini-2.5-flash",
+  zenmuxImageModel: "google/gemini-3-pro-image-preview",
+  zenmuxUseCustomTextModel: false,
+  zenmuxUseCustomImageModel: false,
 
   geminiApiKey: "",
   geminiBaseUrl: "https://generativelanguage.googleapis.com",
@@ -128,13 +149,6 @@ export const DEFAULT_SETTINGS: CanvasAISettings = {
   geminiImageModel: "gemini-3-pro-image-preview",
   geminiUseCustomTextModel: false,
   geminiUseCustomImageModel: false,
-
-  gptGodApiKey: "",
-  gptGodBaseUrl: "https://api.gptgod.online",
-  gptGodTextModel: "gemini-2.5-flash",
-  gptGodImageModel: "gemini-3-pro-image-preview",
-  gptGodUseCustomTextModel: false,
-  gptGodUseCustomImageModel: false,
 
   antigravityToolsApiKey: "",
   antigravityToolsBaseUrl: "http://127.0.0.1:8045",
@@ -145,10 +159,15 @@ export const DEFAULT_SETTINGS: CanvasAISettings = {
 
   imageCompressionQuality: 80,
   imageMaxSize: 2048,
+  imageSaveFolder: "",
   defaultAspectRatio: "1:1",
   defaultResolution: "1K",
+  defaultImageCount: 4,
+  sidebarDraftPrompt: "",
+  sidebarSelectedPresetId: "",
 
   debugMode: false,
+  showAllTextModelsInSettings: false,
 
   imageSystemPrompt:
     "Role: A Professional Image Creator. Use the following references for image creation.",
@@ -177,12 +196,12 @@ export function getModelByProvider(
   switch (provider) {
     case "openrouter":
       return settings[`openRouter${key}`];
-    case "yunwu":
-      return settings[`yunwu${key}`];
+    case "openai":
+      return settings[`openAI${key}`];
+    case "zenmux":
+      return settings[`zenmux${key}`];
     case "gemini":
       return settings[`gemini${key}`];
-    case "gptgod":
-      return settings[`gptGod${key}`];
     case "antigravitytools":
       return settings[`antigravityTools${key}`];
     default:
@@ -204,17 +223,17 @@ export function setModelByProvider(
       if (type === "text") settings.openRouterTextModel = modelId;
       else settings.openRouterImageModel = modelId;
       break;
-    case "yunwu":
-      if (type === "text") settings.yunwuTextModel = modelId;
-      else settings.yunwuImageModel = modelId;
+    case "openai":
+      if (type === "text") settings.openAITextModel = modelId;
+      else settings.openAIImageModel = modelId;
+      break;
+    case "zenmux":
+      if (type === "text") settings.zenmuxTextModel = modelId;
+      else settings.zenmuxImageModel = modelId;
       break;
     case "gemini":
       if (type === "text") settings.geminiTextModel = modelId;
       else settings.geminiImageModel = modelId;
-      break;
-    case "gptgod":
-      if (type === "text") settings.gptGodTextModel = modelId;
-      else settings.gptGodImageModel = modelId;
       break;
     case "antigravitytools":
       if (type === "text") settings.antigravityToolsTextModel = modelId;

@@ -4,49 +4,63 @@
 
 # Banana Studio (Obsidian Plugin)
 
-Banana Studio 是一个面向 Obsidian 笔记的 AI 生图插件，当前版本专注于一个流程：
+Banana Studio 是一个面向 Obsidian 的 AI 生图插件，核心流程是：
 
-**在侧边栏生成图片 -> 选择图片 -> 插入到当前笔记**。
+**输入 Prompt -> 生成候选图 -> 选择单张插入到当前笔记正文**。
 
-迁移说明见：[MIGRATION.md](./MIGRATION.md)
+## 功能展示
 
-## 功能概览
+### 1. 文生图（Text-to-Image）
 
-- 侧边栏生图（一次并发生成 4 张候选图）
-- 候选图列表（可预览、插入、丢弃）
-- 插入到当前笔记（优先光标位置，失败回退文末）
-- 过期候选图自动清理（TTL）
-- 支持多 Provider（Gemini / OpenRouter / Yunwu / GPTGod / AntigravityTools）
-- 支持图片模型快速切换、分辨率、比例、图片提示词预设
+输入描述词后，直接生成候选图并进行挑选插入。
+
+![文生图示例](./public/01.jpg)
+
+### 2. 图生图（Image-to-Image）
+
+开启图生图后，使用参考图 + Prompt 进行生成，支持候选图管理与单张插入。
+
+![图生图示例](./public/02.jpg)
+
+### 3. 从当前笔记选择参考图
+
+可直接扫描当前笔记中的图片并选择作为参考图，无需手动重新上传。
+
+![从当前笔记选图](./public/03.jpg)
+
+## 核心能力
+
+- 侧边栏生成候选图，支持并发生成（并发数跟随张数设置）
+- 候选图单卡操作：插入、重生、丢弃、复制嵌入
+- 插入到当前笔记正文（优先当前编辑位置）
+- 图生图参考图管理：本地上传 + 从当前笔记选图
+- 参考图名称自动同步到 Prompt 第一行，并在生成前兜底校正
+- 预设管理、分辨率、比例、张数、模型切换
+
+## Provider 支持
+
+- OpenRouter
+- OpenAI
+- Gemini
+- ZenMux
 
 ## 安装（手动）
 
 1. 在 [Releases](https://github.com/Zanetach/Banana-Studio/releases) 下载最新版本。
-2. 解压到你的 vault：`.obsidian/plugins/banana-studio/`。
-3. 重启 Obsidian，在 `设置 -> 第三方插件` 中启用 `Banana Studio`。
+2. 解压到 vault：`.obsidian/plugins/banana-studio/`。
+3. 重启 Obsidian，在 `设置 -> 第三方插件` 启用 `Banana Studio`。
 
-## 使用流程
-
-1. 打开一篇 Markdown 笔记。
-2. 点击左侧 Ribbon 的香蕉图标，打开侧边栏。
-3. 在侧边栏输入提示词（可选中正文作为上下文）。
-4. 设置图片模型、分辨率、比例后点击 `Generate`。
-5. 在候选图卡片点击：
-   - `Insert`：插入到当前笔记
-   - `Discard`：丢弃并删除候选文件
-
-## 验证建议
-
-- 功能验证
-  - 能打开侧边栏并发起生图
-  - 能看到候选图列表
-  - `Insert` 后图片成功写入笔记
-  - `Discard` 后文件被移除
-- 构建验证（开发者）
+## 开发
 
 ```bash
 npm install
 npm run build
+```
+
+本地开发同步到 Obsidian Vault：
+
+```bash
+npm run deploy:dev -- /path/to/your/vault
 ```
 
 ## 免责声明
@@ -65,58 +79,71 @@ GPL-3.0，见 [LICENSE](LICENSE)。
 
 # Banana Studio (Obsidian Plugin)
 
-Banana Studio is an AI image plugin for Obsidian notes, focused on one workflow:
+Banana Studio is an AI image generation plugin for Obsidian.
+Core workflow:
 
-**Generate images in the sidebar -> choose a candidate -> insert into the current note**.
+**Write prompt -> generate candidates -> insert selected image into current note content**.
 
-Migration details: [MIGRATION.md](./MIGRATION.md)
+## Feature Showcase
 
-Chat / Edit / whiteboard features are no longer part of this version.
+### 1. Text-to-Image
 
-## Features
+Generate image candidates directly from prompt text.
 
-- Sidebar image generation (4 candidates per run)
-- Candidate list (preview, insert, discard)
-- Insert into current note (cursor-first, EOF fallback)
-- Auto cleanup for expired candidates (TTL)
-- Multi-provider support (Gemini / OpenRouter / Yunwu / GPTGod / AntigravityTools)
-- Image model quick switch, resolution, aspect ratio, prompt presets
+![Text-to-Image](./public/01.jpg)
+
+### 2. Image-to-Image
+
+Use reference image + prompt to generate and manage candidates.
+
+![Image-to-Image](./public/02.jpg)
+
+### 3. Select Reference from Current Note
+
+Pick existing images from the active note as references.
+
+![Select from current note](./public/03.jpg)
+
+## Key Capabilities
+
+- Sidebar candidate generation with configurable parallelism
+- Per-candidate actions: Insert, Regenerate, Discard, Copy Embed
+- Insert into current note body (cursor-first)
+- Reference image flow: local upload + from current note
+- Prompt reference-line auto-sync with pre-generate fallback enforcement
+- Presets, resolution, aspect ratio, count, model switching
+
+## Supported Providers
+
+- OpenRouter
+- OpenAI
+- Gemini
+- ZenMux
 
 ## Installation (Manual)
 
-1. Download the latest release from [Releases](https://github.com/Zanetach/Banana-Studio/releases).
-2. Extract into your vault at `.obsidian/plugins/banana-studio/`.
-3. Restart Obsidian and enable `Banana Studio` in `Settings -> Community Plugins`.
+1. Download latest package from [Releases](https://github.com/Zanetach/Banana-Studio/releases).
+2. Extract to `.obsidian/plugins/banana-studio/` in your vault.
+3. Restart Obsidian and enable `Banana Studio` in Community Plugins.
 
-## Workflow
-
-1. Open a Markdown note.
-2. Click the banana ribbon icon to open the sidebar.
-3. Enter a prompt (optionally select note text as context).
-4. Set model/resolution/aspect ratio and click `Generate`.
-5. For each candidate image:
-   - `Insert`: insert into the current note
-   - `Discard`: drop candidate and delete file
-
-## Validation
-
-- Functional checks
-  - Sidebar opens and can generate images
-  - Candidate list is visible
-  - `Insert` adds image embed to note
-  - `Discard` removes candidate file
-- Build check (for developers)
+## Development
 
 ```bash
 npm install
 npm run build
 ```
 
+Local sync to a vault:
+
+```bash
+npm run deploy:dev -- /path/to/your/vault
+```
+
 ## Disclaimer
 
-- This plugin depends on third-party model APIs and usage may incur cost.
+- Third-party API usage may incur cost.
 - API keys are stored locally in Obsidian config.
-- Users are responsible for content compliance.
+- Users are responsible for generated content compliance.
 
 ## License
 
