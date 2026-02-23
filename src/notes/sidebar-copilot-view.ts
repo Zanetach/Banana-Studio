@@ -248,7 +248,7 @@ export class SideBarCoPilotView extends ItemView {
     const zone1 = footer.createDiv("sidebar-zone-1");
 
     const presetSection = zone1.createDiv("sidebar-preset-section");
-    presetSection.createEl("label", { text: "预设" });
+    presetSection.createEl("label", { text: "预设区" });
     const presetControls = presetSection.createDiv("sidebar-preset-controls");
 
     this.presetSelect = presetControls.createEl("select", {
@@ -261,6 +261,8 @@ export class SideBarCoPilotView extends ItemView {
     });
 
     const paramsSection = zone1.createDiv("sidebar-params-section");
+    paramsSection.createEl("label", { text: "参数区" });
+
     const optionsRow = paramsSection.createDiv("canvas-ai-image-options");
 
     const modelGroup = optionsRow.createDiv("canvas-ai-option-group");
@@ -293,10 +295,9 @@ export class SideBarCoPilotView extends ItemView {
       },
     });
 
-    const actionRow = zone2.createDiv("canvas-ai-action-row");
-    this.generateBtn = actionRow.createEl("button", {
+    this.generateBtn = zone2.createEl("button", {
       cls: "canvas-ai-generate-btn",
-      text: "Generate",
+      text: "生成",
     });
 
     this.setupEvents();
@@ -304,14 +305,6 @@ export class SideBarCoPilotView extends ItemView {
   }
 
   private setupEvents(): void {
-    this.inputEl.addEventListener("input", () => {
-      this.updateGenerateButtonState();
-    });
-
-    this.inputEl.addEventListener("focus", () => {
-      this.captureSelectionOnFocus();
-    });
-
     this.presetSelect.addEventListener("change", () => {
       const selectedId = this.presetSelect.value;
       const selected = this.imagePresets.find((p) => p.id === selectedId);
@@ -344,13 +337,6 @@ export class SideBarCoPilotView extends ItemView {
     this.generateBtn.addEventListener("click", () => {
       void this.handleGenerate();
     });
-
-    this.containerEl.addEventListener("keydown", (evt) => {
-      if ((evt.ctrlKey || evt.metaKey) && evt.key === "Enter") {
-        evt.preventDefault();
-        void this.handleGenerate();
-      }
-    });
   }
 
   private initFromSettings(): void {
@@ -376,7 +362,7 @@ export class SideBarCoPilotView extends ItemView {
 
     this.presetSelect.createEl("option", {
       value: "",
-      text: "预设",
+      text: "选择预设",
     });
 
     this.imagePresets.forEach((preset) => {
@@ -470,7 +456,7 @@ export class SideBarCoPilotView extends ItemView {
       this.app.workspace.on("active-leaf-change", () => {
         const file = this.app.workspace.getActiveFile();
         if (file?.extension !== "md") {
-          this.clearCapturedContext();
+          this.capturedContext = null;
         }
       }),
     );
@@ -480,41 +466,12 @@ export class SideBarCoPilotView extends ItemView {
     if (!this.generateBtn) return;
 
     if (this.pendingTaskCount === 0) {
-      this.generateBtn.textContent = "Generate";
+      this.generateBtn.textContent = "生成";
       this.generateBtn.removeClass("generating");
     } else {
       this.generateBtn.textContent =
         "Generating " + this.pendingTaskCount + " Tasks";
       this.generateBtn.addClass("generating");
-    }
-
-    const hasPrompt = this.inputEl?.value.trim().length > 0;
-    const hasSelection =
-      (this.capturedContext?.selectedText?.trim().length ?? 0) > 0;
-
-    const shouldDisable =
-      !hasPrompt && !hasSelection && this.pendingTaskCount === 0;
-
-    this.generateBtn.disabled = shouldDisable;
-    this.generateBtn.toggleClass("disabled", shouldDisable);
-  }
-
-  private captureSelectionOnFocus(): void {
-    const notesHandler = this.plugin.getNotesHandler();
-    if (notesHandler) {
-      const context = notesHandler.getLastContext();
-      if (context) {
-        this.capturedContext = context;
-      }
-    }
-    this.updateGenerateButtonState();
-  }
-
-  private clearCapturedContext(): void {
-    this.capturedContext = null;
-    const notesHandler = this.plugin.getNotesHandler();
-    if (notesHandler) {
-      notesHandler.clearHighlightForSidebar();
     }
   }
 
