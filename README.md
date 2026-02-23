@@ -28,6 +28,13 @@ Banana Studio 是一个面向 Obsidian 的 AI 生图插件，核心流程是：
 
 ![从当前笔记选图](./public/03.jpg)
 
+### 4. 候选图网格与批量插入
+
+支持多张并发生成、候选图网格预览，以及一键插入全部。
+
+![候选图网格与批量插入](./public/04.jpg)
+
+
 ## 核心能力
 
 - 侧边栏生成候选图，支持并发生成（并发数跟随张数设置）
@@ -103,6 +110,12 @@ Use reference image + prompt to generate and manage candidates.
 Pick existing images from the active note as references.
 
 ![Select from current note](./public/03.jpg)
+
+### 4. Candidate Grid and Bulk Insert
+
+Supports concurrent multi-image generation, grid preview, and one-click insert all.
+
+![Candidate grid and bulk insert](./public/04.jpg)
 
 ## Key Capabilities
 

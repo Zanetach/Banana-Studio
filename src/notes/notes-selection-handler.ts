@@ -5,7 +5,7 @@
 
 import { App, Editor, MarkdownView, Notice, TFile } from "obsidian";
 import type CanvasAIPlugin from "../../main";
-import { SelectionContext } from "../types";
+import { SelectionContext } from "./types";
 import { extractDocumentImages, saveImageToVault } from "../utils/image-utils";
 import { isZhLocale, t } from "../../lang/helpers";
 import {

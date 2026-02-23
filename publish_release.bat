@@ -11,7 +11,7 @@ del versions.bat
 :menu
 cls
 echo ========================================================
-echo       Obsidian 插件一键发布助手 (Canvas Banana)
+echo       Obsidian 插件一键发布助手 (Banana Studio)
 echo ========================================================
 echo.
 echo  当前版本: !CURRENT_VERSION!
@@ -65,7 +65,7 @@ if /i "%confirm%"=="y" (
     echo.
     echo 正在推送...
     git push --follow-tags
-    
+
     if !errorlevel! equ 0 (
         echo.
         echo ========================================================

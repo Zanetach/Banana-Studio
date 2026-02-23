@@ -61,7 +61,13 @@ export default class CanvasAIPlugin extends Plugin {
 
   private migrateLegacySettings(): void {
     const rawProvider = this.settings.apiProvider as string;
-    if (rawProvider === "yunwu" || rawProvider === "gptgod") {
+    const supportedProviders = new Set([
+      "openrouter",
+      "openai",
+      "zenmux",
+      "gemini",
+    ]);
+    if (!supportedProviders.has(rawProvider)) {
       this.settings.apiProvider = "openrouter";
     }
 

@@ -436,10 +436,16 @@ export class CanvasAISettingTab extends PluginSettingTab {
 
           .addOption("openrouter", t("OpenRouter"))
           .setValue(
-            this.plugin.settings.apiProvider === "yunwu" ||
-              this.plugin.settings.apiProvider === "antigravitytools"
-              ? "openrouter"
-              : this.plugin.settings.apiProvider,
+            (() => {
+              const rawProvider = this.plugin.settings.apiProvider as string;
+              const supported = new Set([
+                "openrouter",
+                "openai",
+                "zenmux",
+                "gemini",
+              ]);
+              return supported.has(rawProvider) ? rawProvider : "openrouter";
+            })(),
           )
           .onChange(async (value) => {
             this.plugin.settings.apiProvider = value as ApiProvider;
@@ -454,11 +460,12 @@ export class CanvasAISettingTab extends PluginSettingTab {
           }),
       );
 
-    const rawProvider = this.plugin.settings.apiProvider;
-    const provider =
-      rawProvider === "antigravitytools" || rawProvider === "yunwu"
-        ? "openrouter"
-        : rawProvider;
+    const rawProvider = this.plugin.settings.apiProvider as string;
+    const provider = (
+      ["openrouter", "openai", "zenmux", "gemini"].includes(rawProvider)
+        ? rawProvider
+        : "openrouter"
+    ) as ApiProvider;
 
     if (provider !== rawProvider) {
       this.plugin.settings.apiProvider = provider;

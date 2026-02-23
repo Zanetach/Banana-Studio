@@ -4,13 +4,7 @@
  */
 
 // ========== API Provider Type ==========
-export type ApiProvider =
-  | "openrouter"
-  | "yunwu"
-  | "openai"
-  | "zenmux"
-  | "gemini"
-  | "antigravitytools";
+export type ApiProvider = "openrouter" | "openai" | "zenmux" | "gemini";
 
 // ========== Quick Switch Model ==========
 export interface QuickSwitchModel {
@@ -55,14 +49,6 @@ export interface CanvasAISettings {
   zenmuxUseCustomTextModel: boolean;
   zenmuxUseCustomImageModel: boolean;
 
-  // Legacy Yunwu settings (for migration only)
-  yunwuApiKey?: string;
-  yunwuBaseUrl?: string;
-  yunwuTextModel?: string;
-  yunwuImageModel?: string;
-  yunwuUseCustomTextModel?: boolean;
-  yunwuUseCustomImageModel?: boolean;
-
   // Google Gemini settings
   geminiApiKey: string;
   geminiBaseUrl: string;
@@ -70,14 +56,6 @@ export interface CanvasAISettings {
   geminiImageModel: string;
   geminiUseCustomTextModel: boolean;
   geminiUseCustomImageModel: boolean;
-
-  // AntigravityTools settings
-  antigravityToolsApiKey: string;
-  antigravityToolsBaseUrl: string;
-  antigravityToolsTextModel: string;
-  antigravityToolsImageModel: string;
-  antigravityToolsUseCustomTextModel: boolean;
-  antigravityToolsUseCustomImageModel: boolean;
 
   // Legacy fields (for migration)
   textModel?: string;
@@ -150,13 +128,6 @@ export const DEFAULT_SETTINGS: CanvasAISettings = {
   geminiUseCustomTextModel: false,
   geminiUseCustomImageModel: false,
 
-  antigravityToolsApiKey: "",
-  antigravityToolsBaseUrl: "http://127.0.0.1:8045",
-  antigravityToolsTextModel: "gemini-3-flash",
-  antigravityToolsImageModel: "gemini-3-pro-image",
-  antigravityToolsUseCustomTextModel: false,
-  antigravityToolsUseCustomImageModel: false,
-
   imageCompressionQuality: 80,
   imageMaxSize: 2048,
   imageSaveFolder: "",
@@ -202,8 +173,6 @@ export function getModelByProvider(
       return settings[`zenmux${key}`];
     case "gemini":
       return settings[`gemini${key}`];
-    case "antigravitytools":
-      return settings[`antigravityTools${key}`];
     default:
       return "";
   }
@@ -234,10 +203,6 @@ export function setModelByProvider(
     case "gemini":
       if (type === "text") settings.geminiTextModel = modelId;
       else settings.geminiImageModel = modelId;
-      break;
-    case "antigravitytools":
-      if (type === "text") settings.antigravityToolsTextModel = modelId;
-      else settings.antigravityToolsImageModel = modelId;
       break;
   }
 }

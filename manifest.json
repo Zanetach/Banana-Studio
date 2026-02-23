@@ -1,7 +1,7 @@
 {
     "id": "banana-studio",
     "name": "Banana Studio",
-    "version": "0.2.1",
+    "version": "0.2.2",
     "minAppVersion": "1.8.0",
     "description": "Sidebar AI image generation for notes: generate, choose, and insert.",
     "author": "Zane",

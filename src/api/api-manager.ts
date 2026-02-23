@@ -17,7 +17,6 @@ export type {
   OpenRouterRequest,
   OpenRouterChoice,
   OpenRouterResponse,
-  GptGodResponse,
   GeminiPart,
   GeminiContent,
   GeminiRequest,
@@ -38,7 +37,7 @@ export class ApiManager {
     this.openrouter = new OpenRouterProvider(settings);
     this.openai = new OpenAIProvider(settings);
     this.zenmux = new ZenMuxProvider(settings);
-    this.gemini = new GeminiProvider(settings, false);
+    this.gemini = new GeminiProvider(settings);
   }
 
   /**

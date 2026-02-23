@@ -874,11 +874,15 @@ export class SideBarCoPilotView extends ItemView {
 
   private initFromSettings(): void {
     this.imagePresets = [...(this.plugin.settings.imagePresets || [])];
+    const supportedProviders = new Set([
+      "openrouter",
+      "openai",
+      "zenmux",
+      "gemini",
+    ]);
     this.quickSwitchImageModels = [
       ...(this.plugin.settings.quickSwitchImageModels || []),
-    ].filter(
-      (m) => !["gptgod", "antigravitytools"].includes(String(m.provider || "")),
-    );
+    ].filter((m) => supportedProviders.has(String(m.provider || "")));
 
     if (
       this.quickSwitchImageModels.length !==
@@ -891,11 +895,10 @@ export class SideBarCoPilotView extends ItemView {
     }
 
     const rawSelectedModel = this.plugin.settings.paletteImageModel || "";
-    this.selectedImageModel =
-      rawSelectedModel.startsWith("gptgod|") ||
-      rawSelectedModel.startsWith("antigravitytools|")
-        ? ""
-        : rawSelectedModel;
+    const selectedModelProvider = rawSelectedModel.split("|")[0] || "";
+    this.selectedImageModel = supportedProviders.has(selectedModelProvider)
+      ? rawSelectedModel
+      : "";
 
     if (rawSelectedModel !== this.selectedImageModel) {
       this.plugin.settings.paletteImageModel = this.selectedImageModel;

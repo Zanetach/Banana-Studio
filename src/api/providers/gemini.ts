@@ -1,6 +1,6 @@
 /**
  * Gemini Provider
- * 处理 Gemini 和 Yunwu 的原生 API 调用
+ * 处理 Gemini 原生 API 调用
  */
 
 import { requestUrl, RequestUrlParam } from "obsidian";
@@ -15,11 +15,9 @@ import { isHttpError, getErrorMessage, requestUrlWithTimeout } from "../utils";
 
 export class GeminiProvider {
   private settings: CanvasAISettings;
-  private isYunwu: boolean;
 
-  constructor(settings: CanvasAISettings, isYunwu: boolean = false) {
+  constructor(settings: CanvasAISettings) {
     this.settings = settings;
-    this.isYunwu = isYunwu;
   }
 
   updateSettings(settings: CanvasAISettings): void {
@@ -27,34 +25,28 @@ export class GeminiProvider {
   }
 
   private get providerName(): string {
-    return this.isYunwu ? "yunwu" : "gemini";
+    return "gemini";
   }
 
   getApiKey(): string {
-    return this.isYunwu
-      ? this.settings.yunwuApiKey || ""
-      : this.settings.geminiApiKey || "";
+    return this.settings.geminiApiKey || "";
   }
 
   getTextModel(): string {
-    const model = this.isYunwu
-      ? this.settings.yunwuTextModel || "gemini-2.0-flash"
-      : this.settings.geminiTextModel || "gemini-2.5-flash";
+    const model = this.settings.geminiTextModel || "gemini-2.5-flash";
     return this.normalizeModel(model);
   }
 
   getImageModel(): string {
-    const model = this.isYunwu
-      ? this.settings.yunwuImageModel || "gemini-3-pro-image-preview"
-      : this.settings.geminiImageModel || "gemini-2.5-flash-preview-05-20";
+    const model =
+      this.settings.geminiImageModel || "gemini-2.5-flash-preview-05-20";
     return this.normalizeModel(model);
   }
 
   private getBaseUrl(): string {
-    return this.isYunwu
-      ? this.settings.yunwuBaseUrl || "https://yunwu.ai"
-      : this.settings.geminiBaseUrl ||
-          "https://generativelanguage.googleapis.com";
+    return (
+      this.settings.geminiBaseUrl || "https://generativelanguage.googleapis.com"
+    );
   }
 
   private normalizeModel(model: string): string {
