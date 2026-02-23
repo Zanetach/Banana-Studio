@@ -1,122 +1,46 @@
-/**
- * Sidebar CoPilot View
- * Notes AI 侧边栏视图，提供多轮对话、文档编辑和图片生成功能
- */
-
-import {
-  ItemView,
-  WorkspaceLeaf,
-  Notice,
-  Scope,
-  Editor,
-  MarkdownRenderer,
-  setIcon,
-  MarkdownView,
-} from "obsidian";
+import { ItemView, WorkspaceLeaf, Notice, setIcon, TFile } from "obsidian";
 import type CanvasAIPlugin from "../../main";
-import {
-  PromptPreset,
-  QuickSwitchModel,
-  ApiProvider,
-} from "../settings/settings";
-import { ConfirmModal, DiffModal } from "../ui/modals";
-import { PresetManager } from "../ui/preset-manager";
-import { buildEditModeSystemPrompt } from "../prompts/edit-mode-prompt";
-import { applyPatches, TextChange } from "./text-patcher";
+import type { PromptPreset, QuickSwitchModel } from "../settings/settings";
 import { t } from "../../lang/helpers";
-import { extractDocumentImages } from "../utils/image-utils";
-import { NotesSelectionContext } from "./notes-selection-handler";
-import { ApiManager } from "../api/api-manager";
-import type { GeminiContent, GeminiPart } from "../api/types";
-import { ModeController, PaletteMode } from "./mode-controller";
-import {
-  createTabs,
-  createPresetRow,
-  createModelSelectRow,
-  createImageOptionsRow,
-  createThinkingOptionsRow,
-  refreshPresetSelect,
-  updateModelSelect,
-  setupKeyboardIsolation,
-  TabsElements,
-  PresetRowElements,
-  ImageOptionsElements,
-  ThinkingOptionsElements,
-} from "./shared-ui-builder";
+import type { NotesSelectionContext } from "./notes-selection-handler";
+import type { GeneratedImageCandidate } from "./note-image-task-manager";
 
 export const VIEW_TYPE_SIDEBAR_COPILOT = "canvas-ai-sidebar-copilot";
 
-type SidebarMode = PaletteMode;
+type CandidateStatus = "ready" | "inserted" | "discarded";
 
-interface ChatMessage {
-  role: "user" | "assistant";
-  content: string;
-  /** 思考内容，仅用于显示，不计入历史上下文和复制 */
-  thinking?: string;
-  /** Gemini 3.0+ thought signature */
-  thoughtSignature?: string;
-  timestamp: number;
+interface SidebarImageCandidate extends GeneratedImageCandidate {
+  status: CandidateStatus;
 }
 
 export class SideBarCoPilotView extends ItemView {
   private plugin: CanvasAIPlugin;
-  private chatHistory: ChatMessage[] = [];
-  private currentDocPath: string | null = null;
 
-  // DOM Elements
   private messagesContainer: HTMLElement;
+  private candidateContainer: HTMLElement;
+  private candidateListEl: HTMLElement;
   private inputEl: HTMLTextAreaElement;
   private generateBtn: HTMLButtonElement;
-  private footerEl: HTMLElement;
-  private notSupportedEl: HTMLElement;
 
-  // Mode Controller and UI Elements
-  private modeController: ModeController;
-  private tabs: TabsElements;
-  private presetRow: PresetRowElements;
-  private editModelRow: { container: HTMLElement; select: HTMLSelectElement };
-  private chatModelRow: { container: HTMLElement; select: HTMLSelectElement };
-  private imageOptions: ImageOptionsElements;
-  private chatOptionsContainer: HTMLElement;
+  private imageModelSelect: HTMLSelectElement;
+  private resolutionSelect: HTMLSelectElement;
+  private aspectRatioSelect: HTMLSelectElement;
+  private presetSelect: HTMLSelectElement;
 
-  // UI Elements for Thinking
-  private editThinkingOptions: ThinkingOptionsElements;
-  private chatThinkingOptions: ThinkingOptionsElements;
-
-  // Settings
-  private editPresets: PromptPreset[] = [];
   private imagePresets: PromptPreset[] = [];
-  private quickSwitchTextModels: QuickSwitchModel[] = [];
   private quickSwitchImageModels: QuickSwitchModel[] = [];
-  private selectedTextModel: string = "";
   private selectedImageModel: string = "";
 
-  // Thinking options (loaded from settings)
-  private thinkingEnabled: boolean = true;
-  private thinkingLevel: string = "HIGH";
-
-  // State
-  private isGenerating: boolean = false;
   private pendingTaskCount: number = 0;
+  private imageCandidates: SidebarImageCandidate[] = [];
+  private candidateCleanupTimer: number | null = null;
+  private readonly candidateTtlMs = 24 * 60 * 60 * 1000;
 
-  // Selection context
   private capturedContext: NotesSelectionContext | null = null;
-
-  private onModeChange: ((mode: SidebarMode) => void) | null = null;
-
-  private keyScope: Scope;
-  private presetManager: PresetManager;
 
   constructor(leaf: WorkspaceLeaf, plugin: CanvasAIPlugin) {
     super(leaf);
     this.plugin = plugin;
-
-    this.keyScope = new Scope(this.app.scope);
-    this.keyScope.register(["Ctrl"], "Enter", (evt: KeyboardEvent) => {
-      evt.preventDefault();
-      void this.handleGenerate();
-      return false;
-    });
   }
 
   getViewType(): string {
@@ -124,1391 +48,225 @@ export class SideBarCoPilotView extends ItemView {
   }
 
   getDisplayText(): string {
-    return t("Canvas Banana");
+    return "Banana Studio";
   }
 
   getIcon(): string {
     return "banana";
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- Obsidian ItemView interface requires async signature but no await needed
   async onOpen(): Promise<void> {
     const container = this.containerEl.children[1] as HTMLElement;
     container.empty();
     container.addClass("sidebar-copilot-container");
 
     this.createDOM(container);
-
-    // Initialize PresetManager after DOM is created
-    this.presetManager = new PresetManager(this.app, {
-      getPresets: () => this.getCurrentPresets(),
-      setPresets: (presets) => this.setCurrentPresets(presets),
-      getInputValue: () => this.inputEl?.value || "",
-      getSelectValue: () => this.presetRow.select?.value || "",
-      refreshDropdown: () => this.refreshPresetDropdown(),
-      setSelectValue: (id) => {
-        if (this.presetRow.select) this.presetRow.select.value = id;
-      },
-    });
-
     this.initFromSettings();
     this.registerActiveFileListener();
+    this.startCandidateCleanupTimer();
   }
 
-  // eslint-disable-next-line @typescript-eslint/require-await -- Obsidian ItemView interface requires async signature but no await needed
   async onClose(): Promise<void> {
-    this.chatHistory = [];
-    this.currentDocPath = null;
-  }
-
-  private createDOM(container: HTMLElement): void {
-    // Header
-    const header = container.createDiv("sidebar-copilot-header");
-    header.createDiv({
-      cls: "sidebar-copilot-title",
-      text: t("Canvas Banana"),
-    });
-
-    // Messages Area
-    this.messagesContainer = container.createDiv("sidebar-chat-messages");
-
-    // Not Supported Message
-    this.notSupportedEl = container.createDiv("sidebar-not-supported");
-    this.notSupportedEl.addClass("is-hidden");
-    this.notSupportedEl.createEl("p", {
-      cls: "sidebar-not-supported-text",
-      text: t("Notes AI only works with markdown files"),
-    });
-
-    // Footer
-    this.footerEl = container.createDiv("sidebar-copilot-footer");
-
-    // Tabs (using shared builder)
-    this.tabs = createTabs(this.footerEl);
-
-    // Preset Row (using shared builder)
-    this.presetRow = createPresetRow(this.footerEl);
-
-    // Input Textarea
-    this.inputEl = this.footerEl.createEl("textarea", {
-      cls: "canvas-ai-prompt-input",
-      attr: { placeholder: t("Enter instructions"), rows: "3" },
-    });
-
-    // Edit Model Selection (using shared builder)
-    const editOptionsContainer = this.footerEl.createDiv(
-      "canvas-ai-chat-options"
-    );
-    // Add Thinking options to Edit
-    this.editThinkingOptions = createThinkingOptionsRow(
-      editOptionsContainer,
-      this.thinkingEnabled,
-      this.thinkingLevel
-    );
-    this.editModelRow = createModelSelectRow(
-      editOptionsContainer,
-      t("Palette Model")
-    );
-
-    // Image Options (using shared builder)
-    this.imageOptions = createImageOptionsRow(this.footerEl);
-
-    // Chat Options (hidden by default, shown when Chat tab is active)
-    this.chatOptionsContainer = this.footerEl.createDiv(
-      "canvas-ai-chat-mode-options is-hidden"
-    );
-
-    // Thinking Options Row (Chat)
-    this.chatThinkingOptions = createThinkingOptionsRow(
-      this.chatOptionsContainer,
-      this.thinkingEnabled,
-      this.thinkingLevel
-    );
-
-    this.chatModelRow = createModelSelectRow(
-      this.chatOptionsContainer,
-      t("Palette Model")
-    );
-
-    // Action Row
-    const actionRow = this.footerEl.createDiv("canvas-ai-action-row");
-    this.generateBtn = actionRow.createEl("button", {
-      cls: "canvas-ai-generate-btn",
-      text: t("Generate"),
-    });
-
-    // Initialize ModeController
-    this.modeController = new ModeController(
-      {
-        editTabBtn: this.tabs.editBtn,
-        imageTabBtn: this.tabs.imageBtn,
-        textTabBtn: this.tabs.chatBtn,
-        editOptionsEl: editOptionsContainer,
-        imageOptionsEl: this.imageOptions.container,
-        textOptionsEl: this.chatOptionsContainer,
-        promptInput: this.inputEl,
-      },
-      {
-        onModeChange: (mode) => {
-          this.refreshPresetDropdown();
-          this.updateGenerateButtonState();
-          this.onModeChange?.(mode);
-        },
-      }
-    );
-
-    // Event Bindings
-    this.tabs.editBtn.addEventListener("click", () =>
-      this.modeController.handleUserSwitch("edit")
-    );
-    this.tabs.imageBtn.addEventListener("click", () =>
-      this.modeController.handleUserSwitch("image")
-    );
-    this.tabs.chatBtn.addEventListener("click", () =>
-      this.modeController.handleUserSwitch("text")
-    );
-
-    // Preset events
-    const applyPreset = () => {
-      const selectedId = this.presetRow.select.value;
-      if (selectedId) {
-        const presets = this.getCurrentPresets();
-        const p = presets.find((x) => x.id === selectedId);
-        if (p) {
-          this.inputEl.value = p.prompt;
-          this.updateGenerateButtonState();
-        }
-      }
-    };
-    this.presetRow.select.addEventListener("change", applyPreset);
-    this.presetRow.select.addEventListener("click", applyPreset);
-
-    this.presetRow.addBtn.addEventListener("click", () =>
-      this.presetManager?.handleAdd()
-    );
-    this.presetRow.deleteBtn.addEventListener("click", () =>
-      this.presetManager?.handleDelete()
-    );
-    this.presetRow.saveBtn.addEventListener("click", () =>
-      this.presetManager?.handleSave()
-    );
-    this.presetRow.renameBtn.addEventListener("click", () =>
-      this.presetManager?.handleRename()
-    );
-
-    // Model change events
-    this.editModelRow.select.addEventListener("change", () => {
-      this.selectedTextModel = this.editModelRow.select.value;
-      this.plugin.settings.paletteEditModel = this.selectedTextModel;
-      void this.plugin.saveSettings();
-      // Sync to chat model select
-      if (this.chatModelRow?.select) {
-        this.chatModelRow.select.value = this.selectedTextModel;
-      }
-    });
-
-    this.chatModelRow.select.addEventListener("change", () => {
-      this.selectedTextModel = this.chatModelRow.select.value;
-      this.plugin.settings.paletteEditModel = this.selectedTextModel;
-      void this.plugin.saveSettings();
-      // Sync to edit model select
-      if (this.editModelRow?.select) {
-        this.editModelRow.select.value = this.selectedTextModel;
-      }
-    });
-
-    this.imageOptions.modelSelect.addEventListener("change", () => {
-      this.selectedImageModel = this.imageOptions.modelSelect.value;
-      this.plugin.settings.paletteImageModel = this.selectedImageModel;
-      void this.plugin.saveSettings();
-    });
-
-    this.imageOptions.resolutionSelect.addEventListener("change", () => {
-      this.plugin.settings.defaultResolution =
-        this.imageOptions.resolutionSelect.value;
-      void this.plugin.saveSettings();
-    });
-
-    this.imageOptions.aspectRatioSelect.addEventListener("change", () => {
-      this.plugin.settings.defaultAspectRatio =
-        this.imageOptions.aspectRatioSelect.value;
-      void this.plugin.saveSettings();
-    });
-
-    // Thinking toggle and budget select
-    const saveThinkingSettings = () => {
-      this.plugin.settings.chatThinkingEnabled = this.thinkingEnabled;
-      this.plugin.settings.chatThinkingLevel = this.thinkingLevel as
-        | "MINIMAL"
-        | "LOW"
-        | "MEDIUM"
-        | "HIGH";
-      void this.plugin.saveSettings();
-    };
-
-    const setupThinkingEvents = (opts: ThinkingOptionsElements) => {
-      opts.toggle.addEventListener("change", () => {
-        this.thinkingEnabled = opts.toggle.checked;
-        // Sync other toggle
-        if (this.editThinkingOptions)
-          this.editThinkingOptions.toggle.checked = this.thinkingEnabled;
-        if (this.chatThinkingOptions)
-          this.chatThinkingOptions.toggle.checked = this.thinkingEnabled;
-        saveThinkingSettings();
-      });
-
-      opts.levelSelect.addEventListener("change", () => {
-        this.thinkingLevel = opts.levelSelect.value;
-        // Sync other select
-        if (this.editThinkingOptions)
-          this.editThinkingOptions.levelSelect.value = this.thinkingLevel;
-        if (this.chatThinkingOptions)
-          this.chatThinkingOptions.levelSelect.value = this.thinkingLevel;
-        saveThinkingSettings();
-      });
-    };
-
-    setupThinkingEvents(this.editThinkingOptions);
-    setupThinkingEvents(this.chatThinkingOptions);
-
-    this.generateBtn.addEventListener(
-      "click",
-      () => void this.handleGenerate()
-    );
-
-    // Scope management
-    this.inputEl.addEventListener("focus", () => {
-      this.app.keymap.pushScope(this.keyScope);
-      this.captureSelectionOnFocus();
-    });
-    this.inputEl.addEventListener("blur", () => {
-      this.app.keymap.popScope(this.keyScope);
-    });
-    this.inputEl.addEventListener("input", () => {
-      this.updateGenerateButtonState();
-    });
-
-    // Keyboard isolation
-    setupKeyboardIsolation(this.inputEl);
-  }
-
-  setOnModeChange(callback: (mode: SidebarMode) => void): void {
-    this.onModeChange = callback;
-  }
-
-  public setMode(mode: SidebarMode): void {
-    if (this.modeController.setMode(mode)) {
-      this.refreshPresetDropdown();
+    if (this.candidateCleanupTimer !== null) {
+      window.clearInterval(this.candidateCleanupTimer);
+      this.candidateCleanupTimer = null;
     }
-  }
-
-  public setEditBlocked(blocked: boolean): void {
-    this.modeController.setEditBlocked(blocked);
-  }
-
-  public setImageBlocked(blocked: boolean): void {
-    this.modeController.setImageBlocked(blocked);
-  }
-
-  private initFromSettings(): void {
-    this.editPresets = [...(this.plugin.settings.editPresets || [])];
-    this.imagePresets = [...(this.plugin.settings.imagePresets || [])];
-    this.refreshPresetDropdown();
-
-    this.quickSwitchTextModels = [
-      ...(this.plugin.settings.quickSwitchTextModels || []),
-    ];
-    this.quickSwitchImageModels = [
-      ...(this.plugin.settings.quickSwitchImageModels || []),
-    ];
-    this.selectedTextModel = this.plugin.settings.paletteEditModel || "";
-    this.selectedImageModel = this.plugin.settings.paletteImageModel || "";
-    this.updateTextModelSelect();
-    this.updateImageModelSelect();
-
-    if (this.imageOptions.resolutionSelect) {
-      this.imageOptions.resolutionSelect.value =
-        this.plugin.settings.defaultResolution || "1K";
-    }
-    if (this.imageOptions.aspectRatioSelect) {
-      this.imageOptions.aspectRatioSelect.value =
-        this.plugin.settings.defaultAspectRatio || "1:1";
-    }
-
-    // Initialize thinking options from settings
-    this.thinkingEnabled = this.plugin.settings.chatThinkingEnabled ?? true;
-    this.thinkingLevel = this.plugin.settings.chatThinkingLevel || "LOW";
-
-    if (this.editThinkingOptions) {
-      this.editThinkingOptions.toggle.checked = this.thinkingEnabled;
-      this.editThinkingOptions.levelSelect.value = this.thinkingLevel;
-    }
-    if (this.chatThinkingOptions) {
-      this.chatThinkingOptions.toggle.checked = this.thinkingEnabled;
-      this.chatThinkingOptions.levelSelect.value = this.thinkingLevel;
-    }
-
-    this.updateGenerateButtonState();
   }
 
   public refreshFromSettings(): void {
     this.initFromSettings();
   }
 
-  private getCurrentPresets(): PromptPreset[] {
-    const mode = this.modeController.getMode();
-    return mode === "image" ? this.imagePresets : this.editPresets;
+  public onSelectionCleared(): void {
+    this.capturedContext = null;
+    this.updateGenerateButtonState();
   }
 
-  private setCurrentPresets(presets: PromptPreset[]): void {
-    const mode = this.modeController.getMode();
-    if (mode === "image") {
-      this.imagePresets = presets;
-      this.plugin.settings.imagePresets = presets;
-    } else {
-      this.editPresets = presets;
-      this.plugin.settings.editPresets = presets;
-    }
-    void this.plugin.saveSettings();
-  }
+  private createDOM(container: HTMLElement): void {
+    const header = container.createDiv("sidebar-copilot-header");
+    header.createDiv({ cls: "sidebar-copilot-title", text: t("Image") });
 
-  private refreshPresetDropdown(): void {
-    refreshPresetSelect(this.presetRow.select, this.getCurrentPresets());
-  }
+    this.messagesContainer = container.createDiv("sidebar-image-log");
 
-  private updateTextModelSelect(): void {
-    this.selectedTextModel = updateModelSelect(
-      this.editModelRow.select,
-      this.quickSwitchTextModels,
-      this.selectedTextModel
+    this.candidateContainer = container.createDiv("sidebar-image-candidates");
+    const candidateHeader = this.candidateContainer.createDiv(
+      "sidebar-image-candidates-header",
     );
-    // Also update chat model select
-    if (this.chatModelRow?.select) {
-      updateModelSelect(
-        this.chatModelRow.select,
-        this.quickSwitchTextModels,
-        this.selectedTextModel
-      );
-    }
+    candidateHeader.createDiv({
+      cls: "sidebar-image-candidates-title",
+      text: "Generated Images",
+    });
+
+    const clearBtn = candidateHeader.createEl("button", {
+      cls: "clickable-icon",
+      attr: { "aria-label": "Clear Expired" },
+    });
+    setIcon(clearBtn, "trash");
+    clearBtn.addEventListener("click", () => {
+      void this.clearExpiredCandidates();
+    });
+
+    this.candidateListEl = this.candidateContainer.createDiv(
+      "sidebar-image-candidates-list",
+    );
+
+    const footer = container.createDiv("canvas-ai-palette-footer");
+
+    const presetRow = footer.createDiv("canvas-ai-preset-row");
+    this.presetSelect = presetRow.createEl("select", {
+      cls: "canvas-ai-preset-select",
+    });
+
+    const optionsRow = footer.createDiv("canvas-ai-image-options");
+
+    const modelGroup = optionsRow.createDiv("canvas-ai-option-group");
+    modelGroup.createEl("label", { text: "Image Model" });
+    this.imageModelSelect = modelGroup.createEl("select", {
+      cls: "canvas-ai-image-model-select",
+    });
+
+    const resolutionGroup = optionsRow.createDiv("canvas-ai-option-group");
+    resolutionGroup.createEl("label", { text: t("Resolution") });
+    this.resolutionSelect = resolutionGroup.createEl("select");
+    ["1K", "2K", "4K"].forEach((v) => {
+      this.resolutionSelect.createEl("option", { value: v, text: v });
+    });
+
+    const aspectGroup = optionsRow.createDiv("canvas-ai-option-group");
+    aspectGroup.createEl("label", { text: "Aspect Ratio" });
+    this.aspectRatioSelect = aspectGroup.createEl("select");
+    ["1:1", "16:9", "9:16", "4:3", "3:4"].forEach((v) => {
+      this.aspectRatioSelect.createEl("option", { value: v, text: v });
+    });
+
+    this.inputEl = footer.createEl("textarea", {
+      cls: "canvas-ai-prompt-input",
+      attr: {
+        placeholder: "Describe image to generate",
+        rows: "3",
+      },
+    });
+
+    const actionRow = footer.createDiv("canvas-ai-action-row");
+    this.generateBtn = actionRow.createEl("button", {
+      cls: "canvas-ai-generate-btn",
+      text: t("Generate"),
+    });
+
+    this.setupEvents();
+    this.renderCandidateList();
   }
 
-  private updateImageModelSelect(): void {
-    this.selectedImageModel = updateModelSelect(
-      this.imageOptions.modelSelect,
-      this.quickSwitchImageModels,
-      this.selectedImageModel
-    );
+  private setupEvents(): void {
+    this.inputEl.addEventListener("input", () => {
+      this.updateGenerateButtonState();
+    });
+
+    this.inputEl.addEventListener("focus", () => {
+      this.captureSelectionOnFocus();
+    });
+
+    this.presetSelect.addEventListener("change", () => {
+      const selectedId = this.presetSelect.value;
+      const selected = this.imagePresets.find((p) => p.id === selectedId);
+      if (selected) {
+        this.inputEl.value = selected.prompt || "";
+        this.updateGenerateButtonState();
+      }
+    });
+
+    this.imageModelSelect.addEventListener("change", () => {
+      this.selectedImageModel = this.imageModelSelect.value;
+      this.plugin.settings.paletteImageModel = this.selectedImageModel;
+      void this.plugin.saveSettings();
+    });
+
+    this.resolutionSelect.addEventListener("change", () => {
+      this.plugin.settings.defaultResolution = this.resolutionSelect.value;
+      void this.plugin.saveSettings();
+    });
+
+    this.aspectRatioSelect.addEventListener("change", () => {
+      this.plugin.settings.defaultAspectRatio = this.aspectRatioSelect.value;
+      void this.plugin.saveSettings();
+    });
+
+    this.generateBtn.addEventListener("click", () => {
+      void this.handleGenerate();
+    });
+
+    this.containerEl.addEventListener("keydown", (evt) => {
+      if ((evt.ctrlKey || evt.metaKey) && evt.key === "Enter") {
+        evt.preventDefault();
+        void this.handleGenerate();
+      }
+    });
+  }
+
+  private initFromSettings(): void {
+    this.imagePresets = [...(this.plugin.settings.imagePresets || [])];
+    this.quickSwitchImageModels = [
+      ...(this.plugin.settings.quickSwitchImageModels || []),
+    ];
+    this.selectedImageModel = this.plugin.settings.paletteImageModel || "";
+
+    this.rebuildPresetSelect();
+    this.rebuildImageModelSelect();
+
+    this.resolutionSelect.value =
+      this.plugin.settings.defaultResolution || "1K";
+    this.aspectRatioSelect.value =
+      this.plugin.settings.defaultAspectRatio || "1:1";
+
+    this.updateGenerateButtonState();
+  }
+
+  private rebuildPresetSelect(): void {
+    this.presetSelect.empty();
+
+    this.presetSelect.createEl("option", {
+      value: "",
+      text: "Choose Preset",
+    });
+
+    this.imagePresets.forEach((preset) => {
+      this.presetSelect.createEl("option", {
+        value: preset.id,
+        text: preset.name,
+      });
+    });
+  }
+
+  private rebuildImageModelSelect(): void {
+    this.imageModelSelect.empty();
+
+    this.imageModelSelect.createEl("option", {
+      value: "",
+      text: "Use default model",
+    });
+
+    this.quickSwitchImageModels.forEach((m) => {
+      const label = `${m.provider}/${m.modelId}`;
+      this.imageModelSelect.createEl("option", {
+        value: `${m.provider}|${m.modelId}`,
+        text: label,
+      });
+    });
+
+    if (this.selectedImageModel) {
+      this.imageModelSelect.value = this.selectedImageModel;
+    }
   }
 
   private registerActiveFileListener(): void {
     this.registerEvent(
-      this.app.workspace.on("file-open", (file) => {
-        if (file && file.path !== this.currentDocPath) {
-          this.currentDocPath = file.path;
-          this.clearConversation(true);
-        }
-        this.updateViewState();
-      })
-    );
-
-    const activeFile = this.app.workspace.getActiveFile();
-    if (activeFile) {
-      this.currentDocPath = activeFile.path;
-    }
-    this.updateViewState();
-  }
-
-  private updateViewState(): void {
-    const activeFile = this.app.workspace.getActiveFile();
-    const isMarkdown = activeFile && activeFile.extension === "md";
-
-    if (isMarkdown) {
-      this.footerEl.removeClass("is-hidden");
-      this.messagesContainer.removeClass("is-hidden");
-      this.notSupportedEl.addClass("is-hidden");
-    } else {
-      this.footerEl.addClass("is-hidden");
-      this.messagesContainer.addClass("is-hidden");
-      this.notSupportedEl.removeClass("is-hidden");
-    }
-  }
-
-  /**
-   * Flatten markdown DOM by removing Obsidian's wrapper containers
-   * This eliminates extra spacing caused by .markdown-preview-sizer and other containers
-   */
-  private flattenMarkdownDOM(containerEl: HTMLElement): void {
-    // 1. Remove .markdown-preview-sizer container
-    const sizer = containerEl.querySelector(".markdown-preview-sizer");
-    if (sizer) {
-      const fragment = document.createDocumentFragment();
-      while (sizer.firstChild) {
-        fragment.appendChild(sizer.firstChild);
-      }
-      containerEl.empty();
-      containerEl.appendChild(fragment);
-    }
-
-    // 2. Flatten <li><p>content</p></li> to <li>content</li>
-    const listItems = containerEl.querySelectorAll("li");
-    listItems.forEach((li) => {
-      // If li has only one child and it's a <p>, unwrap it
-      if (li.children.length === 1 && li.children[0].tagName === "P") {
-        const p = li.children[0];
-        while (p.firstChild) {
-          li.insertBefore(p.firstChild, p);
-        }
-        p.remove();
-      }
-    });
-
-    // 3. Remove empty <p> tags
-    const emptyPs = containerEl.querySelectorAll("p:empty");
-    emptyPs.forEach((p) => p.remove());
-
-    // 4. Remove <br> tags that might cause extra spacing
-    const brs = containerEl.querySelectorAll("br");
-    brs.forEach((br) => br.remove());
-    
-    // 5. Remove whitespace-only text nodes between BLOCK elements
-    // This is the KEY fix - removes newlines and spaces between block tags
-    // But preserves text nodes inside inline elements to allow text selection
-    const blockElements = new Set([
-      'DIV', 'P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
-      'UL', 'OL', 'LI', 'BLOCKQUOTE', 'PRE'
-    ]);
-    
-    const removeWhitespaceNodes = (node: Node) => {
-      const childNodes = Array.from(node.childNodes);
-      childNodes.forEach((child) => {
-        if (child.nodeType === Node.TEXT_NODE) {
-          // Only remove whitespace text nodes if parent is a block element
-          const parent = child.parentElement;
-          if (parent && blockElements.has(parent.tagName)) {
-            const text = child.textContent || "";
-            // Remove if it's ONLY whitespace (newlines, spaces, tabs)
-            if (text.trim() === "") {
-              child.remove();
-            }
-          }
-        } else if (child.nodeType === Node.ELEMENT_NODE) {
-          // Recursively process child elements
-          removeWhitespaceNodes(child);
-        }
-      });
-    };
-    
-    removeWhitespaceNodes(containerEl);
-  }
-
-  private clearConversation(silent: boolean = false): void {
-    this.chatHistory = [];
-    this.messagesContainer.empty();
-    if (!silent) {
-      new Notice(t("Conversation cleared"));
-    }
-  }
-
-  private addMessage(role: "user" | "assistant", content: string): void {
-    const msg: ChatMessage = { role, content, timestamp: Date.now() };
-    this.chatHistory.push(msg);
-
-    const maxTurns = this.plugin.settings.maxConversationTurns || 5;
-    while (this.chatHistory.length > maxTurns * 2) {
-      this.chatHistory.shift();
-    }
-
-    void this.renderMessage(msg);
-  }
-
-  private async renderMessage(msg: ChatMessage): Promise<void> {
-    // Wrapper for hover detection (contains both bubble and actions)
-    const wrapperEl = this.messagesContainer.createDiv(
-      `sidebar-chat-message-wrapper ${msg.role}`
-    );
-
-    // Render Thinking Container if exists (collapsed by default for history)
-    if (msg.thinking) {
-      const { contentEl } = this.createThinkingContainer(
-        wrapperEl,
-        "collapsed"
-      );
-      await MarkdownRenderer.render(
-        this.app,
-        msg.thinking,
-        contentEl,
-        this.currentDocPath || "",
-        this
-      );
-      this.flattenMarkdownDOM(contentEl);
-    }
-
-    // Message bubble (content only)
-    const msgEl = wrapperEl.createDiv(`sidebar-chat-message ${msg.role}`);
-    const contentEl = msgEl.createDiv(
-      "sidebar-message-content sidebar-markdown-compact"
-    );
-    await MarkdownRenderer.render(
-      this.app,
-      msg.content,
-      contentEl,
-      this.currentDocPath || "",
-      this
-    );
-    this.flattenMarkdownDOM(contentEl);
-
-    // Actions (outside bubble, inside wrapper)
-    const actionsEl = wrapperEl.createDiv("sidebar-message-actions");
-
-    // Copy
-    const copyBtn = actionsEl.createEl("button", {
-      cls: "clickable-icon",
-      attr: { "aria-label": t("Copy") },
-    });
-    setIcon(copyBtn, "copy");
-    copyBtn.addEventListener(
-      "click",
-      () => void this.handleCopyMessage(msg.content)
-    );
-
-    // Insert
-    const insertBtn = actionsEl.createEl("button", {
-      cls: "clickable-icon",
-      attr: { "aria-label": t("Insert") },
-    });
-    setIcon(insertBtn, "arrow-down-to-line");
-    insertBtn.addEventListener(
-      "click",
-      () => void this.handleInsertMessage(msg.content)
-    );
-
-    // Delete
-    const deleteBtn = actionsEl.createEl("button", {
-      cls: "clickable-icon",
-      attr: { "aria-label": t("Delete") },
-    });
-    setIcon(deleteBtn, "trash-2");
-    deleteBtn.addEventListener(
-      "click",
-      () => void this.handleDeleteMessage(msg, wrapperEl)
-    );
-
-    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-  }
-
-  private async handleCopyMessage(content: string): Promise<void> {
-    await navigator.clipboard.writeText(content);
-    new Notice(t("Message copied"));
-  }
-
-  private handleInsertMessage(content: string): void {
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile) {
-      new Notice(t("No active file"));
-      return;
-    }
-
-    // Get editor from MarkdownView leaves (more reliable than activeEditor)
-    const leaves = this.app.workspace.getLeavesOfType("markdown");
-    const activeLeaf = leaves.find((leaf) => {
-      const view = leaf.view as MarkdownView;
-      return view.file?.path === activeFile.path;
-    });
-
-    if (activeLeaf) {
-      const view = activeLeaf.view as MarkdownView;
-      const editor = view.editor;
-      if (editor) {
-        const cursor = editor.getCursor();
-        editor.replaceRange(content, cursor);
-        new Notice(t("Text replaced"));
-        return;
-      }
-    }
-
-    new Notice(t("No active file"));
-  }
-
-  private handleDeleteMessage(msg: ChatMessage, el: HTMLElement): void {
-    this.chatHistory.remove(msg);
-    el.remove();
-    new Notice(t("Message deleted"));
-  }
-
-  private async handleGenerate(): Promise<void> {
-    const mode = this.modeController.getMode();
-    if (mode === "image") {
-      return this.handleImageGenerate();
-    } else if (mode === "text") {
-      return this.handleChatGenerate();
-    }
-    return this.handleEditGenerate();
-  }
-
-  private async handleEditGenerate(): Promise<void> {
-    const prompt = this.inputEl.value.trim();
-    if (!prompt) {
-      new Notice(t("Enter instructions"));
-      return;
-    }
-
-    if (this.isGenerating) {
-      new Notice(t("Generation in progress"));
-      return;
-    }
-
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile || activeFile.extension !== "md") {
-      new Notice(t("No active file"));
-      return;
-    }
-
-    const file = activeFile;
-    const docContent = await this.app.vault.read(file);
-
-    const notesHandler = this.plugin.getNotesHandler();
-    if (notesHandler) {
-      const latestContext = notesHandler.getLastContext();
-      if (latestContext) {
-        this.capturedContext = latestContext;
-      }
-    }
-
-    const context = this.capturedContext;
-    const hasSelection =
-      context && context.selectedText && context.selectedText.trim().length > 0;
-
-    this.addMessage("user", prompt);
-    this.inputEl.value = "";
-
-    this.isGenerating = true;
-    this.generateBtn.textContent = t("Generating");
-    this.generateBtn.addClass("generating");
-    this.setImageBlocked(true);
-
-    notesHandler?.setFloatingButtonGenerating(true);
-
-    // Create placeholder message for Assistant response
-    const assistantMsg: ChatMessage = {
-      role: "assistant",
-      content: "",
-      timestamp: Date.now(),
-    };
-    this.chatHistory.push(assistantMsg);
-
-    // Render empty message container (will update in real-time)
-    const messageWrapperEl = this.messagesContainer.createDiv(
-      `sidebar-chat-message-wrapper assistant`
-    );
-    // Thinking container
-    const { contentEl: thinkingContentEl, container: thinkingContainer } =
-      this.createThinkingContainer(messageWrapperEl, "streaming");
-    // By default hide if no thinking
-    if (!this.thinkingEnabled) {
-      thinkingContainer.addClass("is-hidden");
-    }
-
-    const msgBubbleEl = messageWrapperEl.createDiv(
-      `sidebar-chat-message assistant`
-    );
-    const contentEl = msgBubbleEl.createDiv(
-      "sidebar-message-content markdown-preview-view"
-    );
-
-    // Add valid actions
-    const actionsEl = messageWrapperEl.createDiv("sidebar-message-actions");
-    // Copy
-    const copyBtn = actionsEl.createEl("button", {
-      cls: "clickable-icon",
-      attr: { "aria-label": t("Copy") },
-    });
-    setIcon(copyBtn, "copy");
-    copyBtn.addEventListener(
-      "click",
-      () => void this.handleCopyMessage(assistantMsg.content)
-    );
-    // Simple delete for now (since we detached from standard render)
-    const deleteBtn = actionsEl.createEl("button", {
-      cls: "clickable-icon",
-      attr: { "aria-label": t("Delete") },
-    });
-    setIcon(deleteBtn, "trash-2");
-    deleteBtn.addEventListener(
-      "click",
-      () => void this.handleDeleteMessage(assistantMsg, messageWrapperEl)
-    );
-
-    try {
-      const localApiManager = this.createLocalApiManager("text");
-      const systemPrompt = buildEditModeSystemPrompt(
-        this.plugin.settings.noteEditSystemPrompt
-      );
-
-      // Construct Prompt
-      let finalPrompt: string | GeminiContent[];
-      let userInstruction: string;
-      let images: {
-        base64: string;
-        mimeType: string;
-        type: "image" | "pdf";
-      }[] = [];
-
-      if (hasSelection) {
-        userInstruction = `Target Text:\n${context.selectedText}\n\nInstruction:\n${prompt}`;
-        const extractedImages = await extractDocumentImages(
-          this.app,
-          context.selectedText,
-          file.path,
-          this.plugin.settings
-        );
-        images = extractedImages.map((img) => ({
-          ...img,
-          type: "image" as const,
-        }));
-      } else {
-        userInstruction = `Document content:\n${docContent}\n\nInstruction:\n${prompt}`;
-        const extractedImages = await extractDocumentImages(
-          this.app,
-          docContent,
-          file.path,
-          this.plugin.settings
-        );
-        images = extractedImages.map((img) => ({
-          ...img,
-          type: "image" as const,
-        }));
-      }
-
-      if (this.chatHistory.length > 2) {
-        // exclude current user msg and the new empty assistant msg
-        const historyContext = this.chatHistory
-          .slice(0, -2)
-          .map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.content}`)
-          .join("\n");
-        userInstruction = `Previous conversation:\n${historyContext}\n\n${userInstruction}`;
-      }
-
-      if (images.length > 0) {
-        const parts: GeminiPart[] = [];
-        parts.push({ text: userInstruction });
-        images.forEach((img) => {
-          parts.push({
-            inlineData: { mimeType: img.mimeType, data: img.base64 },
-          });
-        });
-        finalPrompt = [{ role: "user", parts }];
-      } else {
-        finalPrompt = userInstruction;
-      }
-
-      // Thinking Config
-      const thinkingConfig = {
-        enabled: this.thinkingEnabled,
-        level: this.thinkingLevel as "MINIMAL" | "LOW" | "MEDIUM" | "HIGH",
-      };
-
-      let fullResponse = "";
-      let fullThinking = "";
-
-      // Stream Request
-      const stream = localApiManager.streamChatCompletion(
-        finalPrompt,
-        systemPrompt,
-        0.5,
-        thinkingConfig
-      );
-
-      for await (const chunk of stream) {
-        if (chunk.thinking) {
-          fullThinking += chunk.thinking;
-          assistantMsg.thinking = fullThinking;
-
-          // Show thinking container if hidden and we have thinking
-          if (
-            fullThinking.length > 0 &&
-            thinkingContainer.hasClass("is-hidden")
-          ) {
-            thinkingContainer.removeClass("is-hidden");
-          }
-
-          // Render thinking markdown
-          thinkingContentEl.empty();
-          await MarkdownRenderer.render(
-            this.app,
-            fullThinking,
-            thinkingContentEl,
-            this.currentDocPath || "",
-            this
-          );
-          this.flattenMarkdownDOM(thinkingContentEl);
-
-          // Auto-scroll thinking container
-          thinkingContentEl.scrollTop = thinkingContentEl.scrollHeight;
-        }
-
-        if (chunk.content) {
-          fullResponse += chunk.content;
-          // Note: We don't partial-render JSON content as it looks bad.
-          // But we could show raw progress if desired.
-          // For now, let's show a "Processing..." indicator in content if empty
-          if (!assistantMsg.content) {
-            // @ts-ignore
-            contentEl.textContent = t("Processing result...");
-          }
-        }
-
-        // Keep main container scrolled to bottom
-        this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-      }
-
-      // Streaming finished
-      assistantMsg.content = fullResponse;
-      if (fullThinking) {
-        // Collapse thinking after done
-        thinkingContainer.removeClass("is-streaming");
-        thinkingContainer.addClass("is-collapsed");
-
-        // Update icon
-        const iconEl = thinkingContainer.querySelector(".thinking-header-icon");
-        if (iconEl) setIcon(iconEl as HTMLElement, "chevron-right");
-      }
-
-      let summary = "";
-      let replacementText = "";
-      let globalChanges: TextChange[] = [];
-
-      try {
-        const jsonMatch = fullResponse.match(/\{[\s\S]*\}/);
-        const jsonStr = jsonMatch ? jsonMatch[0] : fullResponse;
-        const parsed = JSON.parse(jsonStr);
-        replacementText = parsed.replacement || "";
-        globalChanges = parsed.globalChanges || [];
-
-        if (parsed.summary) {
-          summary = parsed.summary;
-        } else if (globalChanges.length > 0) {
-          summary = t("Applied changes with global updates", {
-            count: globalChanges.length.toString(),
-          });
-        } else if (replacementText) {
-          summary = t("Text replaced");
-        } else {
-          summary = t("No changes needed");
-        }
-      } catch {
-        summary =
-          fullResponse.substring(0, 200) +
-          (fullResponse.length > 200 ? "..." : "");
-      }
-
-      // Update the message content with summary/result
-      assistantMsg.content = summary;
-      contentEl.empty();
-      await MarkdownRenderer.render(
-        this.app,
-        summary,
-        contentEl,
-        this.currentDocPath || "",
-        this
-      );
-      this.flattenMarkdownDOM(contentEl);
-      this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
-
-      if (globalChanges.length > 0) {
-        const changesSummary = globalChanges
-          .map(
-            (c, i) =>
-              `${i + 1}. "${c.original.substring(0, 30)}${
-                c.original.length > 30 ? "..." : ""
-              }" → "${c.new.substring(0, 30)}${c.new.length > 30 ? "..." : ""}"`
-          )
-          .join("\n");
-
-        new ConfirmModal(
-          this.app,
-          `${t("Apply")} ${globalChanges.length} ${t(
-            "changes"
-          )}?\n\n${changesSummary}`,
-          () => {
-            void (async () => {
-              const patchResult = applyPatches(docContent, globalChanges);
-              if (patchResult.text !== docContent) {
-                await this.app.vault.modify(file, patchResult.text);
-                new Notice(t("File updated"));
-              }
-            })();
-          }
-        ).open();
-      } else if (replacementText) {
-        let originalText: string;
-        let proposedText: string;
-
-        if (hasSelection && context) {
-          originalText = context.selectedText;
-          proposedText = context.preText + replacementText + context.postText;
-        } else {
-          originalText = docContent;
-          proposedText = replacementText;
-        }
-
-        if (proposedText !== docContent) {
-          const diffContext = {
-            nodeId: "",
-            selectedText: originalText,
-            preText: hasSelection && context ? context.preText : "",
-            postText: hasSelection && context ? context.postText : "",
-            fullText: docContent,
-            fileNode: file,
-          };
-
-          new DiffModal(
-            this.app,
-            diffContext,
-            replacementText,
-            async () => {
-              await this.app.vault.modify(file, proposedText);
-              new Notice(t("File updated"));
-              if (hasSelection && context?.editor) {
-                const newEndOffset =
-                  context.preText.length + replacementText.length;
-                this.selectTextRange(
-                  context.editor,
-                  context.preText.length,
-                  newEndOffset
-                );
-              }
-            },
-            () => {
-              /* cancel */
-            }
-          ).open();
-        }
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      // Update the assistant message to show error
-      assistantMsg.content = `Error: ${errorMsg}`;
-      contentEl.setText(`Error: ${errorMsg}`);
-      console.error("Sidebar CoPilot Error:", error);
-    } finally {
-      this.isGenerating = false;
-      this.generateBtn.textContent = t("Generate");
-      this.generateBtn.removeClass("generating");
-      this.setImageBlocked(false);
-      const notesHandler = this.plugin.getNotesHandler();
-      notesHandler?.setFloatingButtonGenerating(false);
-      this.clearCapturedContext();
-    }
-  }
-
-  private handleImageGenerate(): void {
-    const prompt = this.inputEl.value.trim();
-
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile || activeFile.extension !== "md") {
-      new Notice(t("No active file"));
-      return;
-    }
-
-    const notesHandler = this.plugin.getNotesHandler();
-    if (!notesHandler) {
-      new Notice(t("Services not initialized"));
-      return;
-    }
-
-    const latestContext = notesHandler.getLastContext();
-    if (latestContext) {
-      this.capturedContext = latestContext;
-    }
-
-    const context = this.capturedContext;
-    const hasSelection =
-      context && context.selectedText && context.selectedText.trim().length > 0;
-
-    const instruction =
-      prompt ||
-      (hasSelection ? context.selectedText : t("Generate image from context"));
-
-    this.addMessage("user", instruction);
-    this.inputEl.value = "";
-
-    this.pendingTaskCount++;
-    this.updateGenerateButtonState();
-
-    try {
-      notesHandler
-        .handleImageGeneration(instruction, context)
-        .catch((err) => {
-          const msg = err instanceof Error ? err.message : String(err);
-          console.error("Sidebar Image Error:", err);
-          this.addMessage("assistant", `Error: ${msg}`);
-        })
-        .finally(() => {
-          this.pendingTaskCount = Math.max(0, this.pendingTaskCount - 1);
-          this.updateGenerateButtonState();
+      this.app.workspace.on("active-leaf-change", () => {
+        const file = this.app.workspace.getActiveFile();
+        if (file?.extension !== "md") {
           this.clearCapturedContext();
-        });
-
-      this.addMessage("assistant", t("Generating image based on your request"));
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      this.addMessage("assistant", `Error: ${errorMsg}`);
-      console.error("Sidebar CoPilot Error:", error);
-
-      this.pendingTaskCount = Math.max(0, this.pendingTaskCount - 1);
-      this.updateGenerateButtonState();
-    }
-  }
-
-  private async handleChatGenerate(): Promise<void> {
-    const prompt = this.inputEl.value.trim();
-    if (!prompt) {
-      new Notice(t("Ask a question"));
-      return;
-    }
-
-    if (this.isGenerating) {
-      new Notice(t("Generation in progress"));
-      return;
-    }
-
-    const activeFile = this.app.workspace.getActiveFile();
-    if (!activeFile || activeFile.extension !== "md") {
-      new Notice(t("No active file"));
-      return;
-    }
-
-    const file = activeFile;
-    const docContent = await this.app.vault.read(file);
-
-    const notesHandler = this.plugin.getNotesHandler();
-    if (notesHandler) {
-      const latestContext = notesHandler.getLastContext();
-      if (latestContext) {
-        this.capturedContext = latestContext;
-      }
-    }
-
-    const context = this.capturedContext;
-    const hasSelection =
-      context && context.selectedText && context.selectedText.trim().length > 0;
-
-    this.addMessage("user", prompt);
-    this.inputEl.value = "";
-
-    this.isGenerating = true;
-    this.generateBtn.textContent = "Generating..."; // Hardcoded for now or use t('Generating')
-    this.generateBtn.addClass("generating");
-
-    // notesHandler?.clearHighlightForSidebar();
-
-    try {
-      const localApiManager = this.createLocalApiManager("text");
-      const systemPrompt =
-        this.plugin.settings.notesChatSystemPrompt ||
-        "You are a helpful assistant. Answer questions based on the provided context. Respond in the same language as the user's question.";
-
-      let userMsg: string | GeminiContent[];
-      let images: {
-        base64: string;
-        mimeType: string;
-        type: "image" | "pdf";
-      }[] = [];
-
-      if (hasSelection) {
-        userMsg = `Context (selected text):\n${context.selectedText}\n\nQuestion:\n${prompt}`;
-        const extractedImages = await extractDocumentImages(
-          this.app,
-          context.selectedText,
-          file.path,
-          this.plugin.settings
-        );
-        images = extractedImages.map((img) => ({
-          ...img,
-          type: "image" as const,
-        }));
-      } else {
-        userMsg = `Context (document content):\n${docContent}\n\nQuestion:\n${prompt}`;
-        const extractedImages = await extractDocumentImages(
-          this.app,
-          docContent,
-          file.path,
-          this.plugin.settings
-        );
-        images = extractedImages.map((img) => ({
-          ...img,
-          type: "image" as const,
-        }));
-      }
-
-      const isGemini =
-        this.selectedTextModel.startsWith("gemini") ||
-        this.selectedTextModel.startsWith("antigravity");
-
-      // Construct message based on provider capability
-      if (isGemini) {
-        if (this.chatHistory.length > 0) {
-          // Construct native history for Gemini
-          const history: GeminiContent[] = [];
-
-          const previousMsgs = this.chatHistory.slice(0, -1);
-          for (const msg of previousMsgs) {
-            const parts: GeminiPart[] = [];
-            if (msg.role === "assistant" && msg.thinking) {
-              parts.push({ text: msg.thinking, thought: true });
-            }
-            if (msg.role === "assistant" && msg.thoughtSignature) {
-              parts.push({
-                text: msg.content,
-                thoughtSignature: msg.thoughtSignature,
-              });
-            } else {
-              parts.push({ text: msg.content });
-            }
-            history.push({
-              role: msg.role === "user" ? "user" : "model",
-              parts: parts,
-            });
-          }
-
-          // Current message parts
-          const currentParts: GeminiPart[] = [];
-          if (hasSelection) {
-            currentParts.push({
-              text: `Context (selected text):\n${context.selectedText}\n\nQuestion:\n${prompt}`,
-            });
-          } else {
-            currentParts.push({
-              text: `Context (document content):\n${docContent}\n\nQuestion:\n${prompt}`,
-            });
-          }
-
-          for (const img of images) {
-            currentParts.push({
-              inlineData: { mimeType: img.mimeType, data: img.base64 },
-            });
-          }
-
-          history.push({ role: "user", parts: currentParts });
-          userMsg = history;
-        } else {
-          // First turn
-          const currentParts: GeminiPart[] = [];
-          if (hasSelection) {
-            currentParts.push({
-              text: `Context (selected text):\n${context.selectedText}\n\nQuestion:\n${prompt}`,
-            });
-          } else {
-            currentParts.push({
-              text: `Context (document content):\n${docContent}\n\nQuestion:\n${prompt}`,
-            });
-          }
-          for (const img of images) {
-            currentParts.push({
-              inlineData: { mimeType: img.mimeType, data: img.base64 },
-            });
-          }
-          userMsg = [{ role: "user", parts: currentParts }];
         }
-      } else {
-        // Legacy string construction for other providers
-        if (hasSelection) {
-          userMsg = `Context (selected text):\n${context.selectedText}\n\nQuestion:\n${prompt}`;
-        } else {
-          userMsg = `Context (document content):\n${docContent}\n\nQuestion:\n${prompt}`;
-        }
-
-        if (this.chatHistory.length > 2) {
-          const historyContext = this.chatHistory
-            .slice(0, -1)
-            .map((m) => `${m.role === "user" ? "User" : "AI"}: ${m.content}`)
-            .join("\n");
-          userMsg = `Previous conversation:\n${historyContext}\n\n${userMsg}`;
-        }
-      }
-
-      this.addMessage("assistant", ""); // Empty placeholder for streaming
-
-      // Build thinking config
-      const thinkingConfig = this.thinkingEnabled
-        ? {
-            enabled: true,
-            level: this.thinkingLevel as "MINIMAL" | "LOW" | "MEDIUM" | "HIGH",
-          }
-        : undefined;
-
-      if (images.length > 0 && !isGemini) {
-        // Multimodal with thinking support (Legacy/non-Gemini)
-        // Gemini native handles images in streamChatCompletion via userMsg content
-        const response = await localApiManager.multimodalChat(
-          userMsg as string,
-          images,
-          systemPrompt,
-          this.plugin.settings.defaultChatTemperature,
-          thinkingConfig
-        ); // Cast as string because non-Gemini path ensures string
-        this.updateLastAssistantMessageWithThinking(
-          response.content,
-          response.thinking || ""
-        );
-      } else {
-        // Text streaming with thinking support (or Gemini Multimodal)
-        // @ts-ignore -- userMsg can be string or GeminiContent[]
-        const stream = localApiManager.streamChatCompletion(
-          userMsg,
-          systemPrompt,
-          this.plugin.settings.defaultChatTemperature,
-          thinkingConfig
-        );
-        let accumulatedContent = "";
-        let accumulatedThinking = "";
-        let capturedSignature = "";
-
-        for await (const chunk of stream) {
-          if (chunk.thinking) {
-            accumulatedThinking += chunk.thinking;
-          }
-          if (chunk.content) {
-            accumulatedContent += chunk.content;
-          }
-          // @ts-ignore -- thoughtSignature might exist
-          if (chunk.thoughtSignature) {
-            // @ts-ignore
-            capturedSignature = chunk.thoughtSignature;
-          }
-
-          // Update streaming message with separate thinking and content
-          // Both will be rendered as markdown
-          await this.updateStreamingMessage(
-            accumulatedContent,
-            accumulatedThinking
-          );
-        }
-
-        // Final render: ensure thinking is collapsed and everything is fully rendered
-        this.updateLastAssistantMessageWithThinking(
-          accumulatedContent,
-          accumulatedThinking,
-          capturedSignature
-        );
-      }
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      // If the last message is the "thinking" placeholder, replace it
-      const lastMsg = this.chatHistory[this.chatHistory.length - 1];
-      if (
-        lastMsg &&
-        lastMsg.role === "assistant" &&
-        (lastMsg.content === t("AI is thinking...") || !lastMsg.content)
-      ) {
-        this.updateLastAssistantMessage(`Error: ${errorMsg}`);
-      } else {
-        this.addMessage("assistant", `Error: ${errorMsg}`);
-      }
-      console.error("Sidebar Chat Error:", error);
-    } finally {
-      this.isGenerating = false;
-      this.generateBtn.textContent = t("Generate");
-      this.generateBtn.removeClass("generating");
-      this.clearCapturedContext();
-
-      // Mark thinking as collapsed after generation finished
-      const lastMsgEl = this.messagesContainer.lastElementChild;
-      if (lastMsgEl) {
-        const thinkingContainer = lastMsgEl.querySelector(
-          ".canvas-ai-thinking-container"
-        );
-        if (thinkingContainer) {
-          thinkingContainer.removeClass("is-streaming");
-          thinkingContainer.addClass("is-collapsed");
-
-          // Update icon to collapsed state (right arrow)
-          const iconEl = thinkingContainer.querySelector(
-            ".thinking-header-icon"
-          );
-          if (iconEl) setIcon(iconEl as HTMLElement, "chevron-right");
-        }
-      }
-    }
-  }
-
-  public async updateStreamingMessage(
-    content: string,
-    thinking?: string
-  ): Promise<void> {
-    if (this.chatHistory.length === 0) return;
-
-    const lastMsg = this.chatHistory[this.chatHistory.length - 1];
-    if (lastMsg.role === "assistant") {
-      lastMsg.content = content;
-      if (thinking) lastMsg.thinking = thinking;
-
-      const lastMsgEl = this.messagesContainer.lastElementChild;
-      if (lastMsgEl) {
-        const wrapperEl = lastMsgEl.closest(
-          ".sidebar-chat-message-wrapper"
-        ) as HTMLElement;
-        const msgEl = (lastMsgEl.querySelector(".sidebar-chat-message") ||
-          lastMsgEl) as HTMLElement; // handle structure nuances
-
-        // Handle Thinking Container
-        if (thinking) {
-          let thinkingContainer = wrapperEl?.querySelector(
-            ".canvas-ai-thinking-container"
-          ) as HTMLElement;
-
-          if (!thinkingContainer && wrapperEl) {
-            // Create structure if missing
-            const result = this.createThinkingContainer(
-              wrapperEl,
-              "streaming",
-              msgEl
-            );
-            thinkingContainer = result.container;
-          }
-
-          if (thinkingContainer) {
-            const thinkingContentEl =
-              thinkingContainer.querySelector(".thinking-content");
-            if (thinkingContentEl) {
-              // Render Thinking Markdown
-              thinkingContentEl.empty();
-              await MarkdownRenderer.render(
-                this.app,
-                thinking,
-                thinkingContentEl as HTMLElement,
-                this.currentDocPath || "",
-                this
-              );
-              this.flattenMarkdownDOM(thinkingContentEl as HTMLElement);
-
-              // Auto-scroll thinking container only if we are streaming
-              if (thinkingContainer.classList.contains("is-streaming")) {
-                thinkingContentEl.scrollTop = thinkingContentEl.scrollHeight;
-              }
-            }
-          }
-        }
-
-        // Handle Main Content
-        const contentEl = msgEl.querySelector(".sidebar-message-content");
-        if (contentEl) {
-          contentEl.empty();
-          await MarkdownRenderer.render(
-            this.app,
-            content,
-            contentEl as HTMLElement,
-            this.currentDocPath || "",
-            this
-          );
-          this.flattenMarkdownDOM(contentEl as HTMLElement);
-
-          // Auto-scroll main container
-          this.messagesContainer.scrollTop =
-            this.messagesContainer.scrollHeight;
-        }
-      }
-    }
+      }),
+    );
   }
 
   private updateGenerateButtonState(): void {
@@ -1524,139 +282,15 @@ export class SideBarCoPilotView extends ItemView {
       this.generateBtn.addClass("generating");
     }
 
-    // Determine if button should be disabled based on mode
-    const mode = this.modeController.getMode();
     const hasPrompt = this.inputEl?.value.trim().length > 0;
     const hasSelection =
       (this.capturedContext?.selectedText?.trim().length ?? 0) > 0;
 
-    let shouldDisable = false;
-    if (mode === "edit" || mode === "text") {
-      // Edit/Text mode: require prompt
-      shouldDisable = !hasPrompt && this.pendingTaskCount === 0;
-    } else if (mode === "image") {
-      // Image mode: require prompt OR selection
-      shouldDisable =
-        !hasPrompt && !hasSelection && this.pendingTaskCount === 0;
-    }
+    const shouldDisable =
+      !hasPrompt && !hasSelection && this.pendingTaskCount === 0;
 
     this.generateBtn.disabled = shouldDisable;
     this.generateBtn.toggleClass("disabled", shouldDisable);
-  }
-
-  private createLocalApiManager(type: "text" | "image"): ApiManager {
-    const selectedModel =
-      type === "text" ? this.selectedTextModel : this.selectedImageModel;
-    if (!selectedModel) {
-      return new ApiManager(this.plugin.settings);
-    }
-
-    const [provider, modelId] = selectedModel.split("|");
-    if (!provider || !modelId) {
-      return new ApiManager(this.plugin.settings);
-    }
-
-    const localSettings = {
-      ...this.plugin.settings,
-      apiProvider: provider as ApiProvider,
-    };
-
-    if (type === "text") {
-      if (provider === "openrouter") {
-        localSettings.openRouterTextModel = modelId;
-      } else if (provider === "gemini") {
-        localSettings.geminiTextModel = modelId;
-      } else if (provider === "yunwu") {
-        localSettings.yunwuTextModel = modelId;
-      } else if (provider === "gptgod") {
-        localSettings.gptGodTextModel = modelId;
-      }
-    } else {
-      if (provider === "openrouter") {
-        localSettings.openRouterImageModel = modelId;
-      } else if (provider === "gemini") {
-        localSettings.geminiImageModel = modelId;
-      } else if (provider === "yunwu") {
-        localSettings.yunwuImageModel = modelId;
-      } else if (provider === "gptgod") {
-        localSettings.gptGodImageModel = modelId;
-      }
-    }
-
-    return new ApiManager(localSettings);
-  }
-
-  public addExternalMessage(role: "user" | "assistant", content: string): void {
-    this.addMessage(role, content);
-  }
-
-  public updateLastAssistantMessage(content: string): void {
-    if (this.chatHistory.length === 0) return;
-
-    const lastMsg = this.chatHistory[this.chatHistory.length - 1];
-    if (lastMsg.role === "assistant") {
-      lastMsg.content = content;
-
-      const lastMsgEl = this.messagesContainer.lastElementChild;
-      if (lastMsgEl) {
-        const contentEl = lastMsgEl.querySelector(".sidebar-message-content");
-        if (contentEl instanceof HTMLElement) {
-          // Clear and re-render with MarkdownRenderer for proper formatting
-          contentEl.empty();
-          void MarkdownRenderer.render(
-            this.app,
-            content,
-            contentEl,
-            this.currentDocPath || "",
-            this
-          );
-          this.messagesContainer.scrollTop =
-            this.messagesContainer.scrollHeight;
-        }
-      }
-    }
-  }
-
-  /**
-   * 更新最后一条 assistant 消息，分别存储 content 和 thinking
-   * 显示时格式化 thinking 为 callout，但复制/历史上下文仅使用 content
-   */
-  public updateLastAssistantMessageWithThinking(
-    content: string,
-    thinking: string,
-    signature?: string
-  ): void {
-    if (this.chatHistory.length === 0) return;
-
-    const lastMsg = this.chatHistory[this.chatHistory.length - 1];
-    if (lastMsg.role === "assistant") {
-      // 存储原始文本
-      lastMsg.content = content;
-      lastMsg.thinking = thinking || undefined;
-      lastMsg.thoughtSignature = signature || undefined;
-
-      // Re-use logic to render thinking and content in their respective containers
-      void this.updateStreamingMessage(content, thinking);
-
-      // Finalize thinking state: remove streaming animation and collapse
-      const lastMsgEl = this.messagesContainer.lastElementChild;
-      if (lastMsgEl) {
-        const wrapperEl = lastMsgEl.closest(".sidebar-chat-message-wrapper");
-        const thinkingContainer = wrapperEl?.querySelector(
-          ".canvas-ai-thinking-container"
-        );
-        if (thinkingContainer) {
-          thinkingContainer.classList.remove("is-streaming");
-          thinkingContainer.classList.add("is-collapsed");
-
-          // Update icon to chevron-right
-          const iconEl = thinkingContainer.querySelector(
-            ".thinking-header-icon"
-          );
-          if (iconEl) setIcon(iconEl as HTMLElement, "chevron-right");
-        }
-      }
-    }
   }
 
   private captureSelectionOnFocus(): void {
@@ -1678,68 +312,222 @@ export class SideBarCoPilotView extends ItemView {
     }
   }
 
-  /**
-   * 供 NotesSelectionHandler 调用：当用户在编辑器中取消选区时
-   */
-  public onSelectionCleared(): void {
-    this.capturedContext = null;
-    this.updateGenerateButtonState();
+  private async handleGenerate(): Promise<void> {
+    if (this.pendingTaskCount > 0) return;
+    await this.handleImageGenerate();
   }
 
-  private selectTextRange(
-    editor: Editor,
-    startOffset: number,
-    endOffset: number
-  ): void {
+  private async handleImageGenerate(): Promise<void> {
     const notesHandler = this.plugin.getNotesHandler();
-    if (notesHandler) {
-      const startPos = editor.offsetToPos(startOffset);
-      const endPos = editor.offsetToPos(endOffset);
-      notesHandler.selectGeneratedText(editor, startPos, endPos);
+    if (!notesHandler) {
+      new Notice("Notes handler unavailable");
+      return;
+    }
+
+    const prompt = this.inputEl.value.trim();
+
+    const refreshedContext = notesHandler.captureSelectionForSidebar();
+    if (refreshedContext) {
+      this.capturedContext = refreshedContext;
+    }
+
+    if (!prompt && !this.capturedContext?.selectedText?.trim()) {
+      new Notice(t("Enter instructions"));
+      return;
+    }
+
+    const requestCount = 4;
+    this.pendingTaskCount = requestCount;
+    this.updateGenerateButtonState();
+
+    for (let i = 0; i < requestCount; i++) {
+      void (async () => {
+        try {
+          const candidate = await notesHandler.handleImageGeneration(
+            prompt,
+            this.capturedContext,
+          );
+          this.addCandidate(candidate);
+          this.addMessage(
+            "assistant",
+            `Image #${i + 1} ready: ${candidate.fileName}`,
+          );
+        } catch (e) {
+          console.error("Sidebar CoPilot: image generation failed", e);
+          const msg =
+            e instanceof Error ? e.message : "Image generation failed";
+          this.addMessage("assistant", msg);
+        } finally {
+          this.pendingTaskCount = Math.max(0, this.pendingTaskCount - 1);
+          this.updateGenerateButtonState();
+        }
+      })();
     }
   }
 
-  private createThinkingContainer(
-    wrapperEl: HTMLElement,
-    initialState: "collapsed" | "streaming" | "expanded",
-    insertBeforeEl?: Element | null
-  ): { container: HTMLElement; contentEl: HTMLElement } {
-    const isCollapsed = initialState === "collapsed";
+  private addMessage(role: "user" | "assistant", content: string): void {
+    const wrapper = this.messagesContainer.createDiv(
+      `sidebar-image-log-item ${role}`,
+    );
+    wrapper.createDiv({
+      cls: `sidebar-image-log-message ${role}`,
+      text: content,
+    });
+    this.messagesContainer.scrollTop = this.messagesContainer.scrollHeight;
+  }
 
-    const thinkingContainer = document.createElement("div");
-    thinkingContainer.className = `canvas-ai-thinking-container ${
-      isCollapsed ? "is-collapsed" : ""
-    } ${initialState === "streaming" ? "is-streaming" : ""}`;
+  private addCandidate(candidate: GeneratedImageCandidate): void {
+    this.imageCandidates.unshift({ ...candidate, status: "ready" });
+    this.renderCandidateList();
+  }
 
-    if (insertBeforeEl) {
-      wrapperEl.insertBefore(thinkingContainer, insertBeforeEl);
-    } else {
-      wrapperEl.appendChild(thinkingContainer);
+  private renderCandidateList(): void {
+    this.candidateListEl.empty();
+
+    if (this.imageCandidates.length === 0) {
+      this.candidateListEl.createDiv({
+        cls: "sidebar-image-candidate-empty",
+        text: "No images yet",
+      });
+      return;
     }
 
-    // Header
-    const header = thinkingContainer.createDiv("thinking-header");
-    const iconEl = header.createDiv("thinking-header-icon");
-    setIcon(iconEl, isCollapsed ? "chevron-right" : "chevron-down");
-    header.createSpan({
-      text: "Thinking Process",
-      cls: "thinking-header-text",
+    this.imageCandidates.forEach((candidate) => {
+      const card = this.candidateListEl.createDiv(
+        "sidebar-image-candidate-card",
+      );
+
+      const previewSrc = this.getCandidatePreviewSrc(candidate.filePath);
+      const preview = card.createDiv("sidebar-image-candidate-preview");
+      if (previewSrc) {
+        const img = preview.createEl("img", {
+          attr: { src: previewSrc, alt: candidate.fileName },
+        });
+        img.loading = "lazy";
+      } else {
+        preview.createDiv({ text: candidate.fileName });
+      }
+
+      const meta = card.createDiv("sidebar-image-candidate-meta");
+      meta.createDiv({
+        cls: "sidebar-image-candidate-name",
+        text: candidate.fileName,
+      });
+
+      const statusText =
+        candidate.status === "ready"
+          ? "Ready to insert"
+          : candidate.status === "inserted"
+            ? "Inserted"
+            : "Discarded";
+
+      meta.createDiv({
+        cls: `sidebar-image-candidate-status status-${candidate.status}`,
+        text: statusText,
+      });
+
+      const actions = card.createDiv("sidebar-image-candidate-actions");
+      const insertBtn = actions.createEl("button", {
+        cls: "mod-cta",
+        text: t("Insert"),
+      });
+      const discardBtn = actions.createEl("button", {
+        text: "Discard",
+      });
+
+      const disabled = candidate.status !== "ready";
+      insertBtn.disabled = disabled;
+      discardBtn.disabled = disabled;
+
+      insertBtn.addEventListener("click", () => {
+        void this.handleInsertCandidate(candidate.taskId);
+      });
+      discardBtn.addEventListener("click", () => {
+        void this.handleDiscardCandidate(candidate.taskId);
+      });
     });
+  }
 
-    // Toggle logic
-    header.addEventListener("click", () => {
-      const isColl = thinkingContainer.classList.toggle("is-collapsed");
-      setIcon(iconEl, isColl ? "chevron-right" : "chevron-down");
-    });
+  private async handleInsertCandidate(candidateId: string): Promise<void> {
+    const notesHandler = this.plugin.getNotesHandler();
+    if (!notesHandler) return;
 
-    // Content
-    const contentWrapper = thinkingContainer.createDiv(
-      "thinking-content-wrapper"
+    const candidate = this.imageCandidates.find(
+      (c) => c.taskId === candidateId,
     );
-    const contentEl = contentWrapper.createDiv(
-      "thinking-content markdown-preview-view"
-    );
+    if (!candidate || candidate.status !== "ready") return;
 
-    return { container: thinkingContainer, contentEl };
+    const ok = await notesHandler.insertImageCandidate(candidate);
+    if (!ok) return;
+
+    candidate.status = "inserted";
+    this.renderCandidateList();
+    new Notice("Image inserted");
+  }
+
+  private async handleDiscardCandidate(candidateId: string): Promise<void> {
+    const notesHandler = this.plugin.getNotesHandler();
+    if (!notesHandler) return;
+
+    const candidate = this.imageCandidates.find(
+      (c) => c.taskId === candidateId,
+    );
+    if (!candidate || candidate.status !== "ready") return;
+
+    candidate.status = "discarded";
+    this.renderCandidateList();
+
+    try {
+      await notesHandler.removeCandidateImageFile(candidate.filePath);
+    } catch (e) {
+      console.warn("Sidebar CoPilot: failed to delete discarded image", e);
+    }
+  }
+
+  private startCandidateCleanupTimer(): void {
+    if (this.candidateCleanupTimer !== null) return;
+    this.candidateCleanupTimer = window.setInterval(
+      () => {
+        void this.clearExpiredCandidates();
+      },
+      10 * 60 * 1000,
+    );
+  }
+
+  private async clearExpiredCandidates(): Promise<void> {
+    if (this.imageCandidates.length === 0) return;
+    const notesHandler = this.plugin.getNotesHandler();
+    const now = Date.now();
+
+    const remaining: SidebarImageCandidate[] = [];
+    for (const candidate of this.imageCandidates) {
+      const expired = now - candidate.createdAt > this.candidateTtlMs;
+      const keep = !expired || candidate.status === "inserted";
+      if (keep) {
+        remaining.push(candidate);
+        continue;
+      }
+
+      if (candidate.status === "ready" && notesHandler) {
+        try {
+          await notesHandler.removeCandidateImageFile(candidate.filePath);
+        } catch (e) {
+          console.warn("Sidebar CoPilot: failed to cleanup expired image", e);
+        }
+      }
+    }
+
+    if (remaining.length !== this.imageCandidates.length) {
+      this.imageCandidates = remaining;
+      this.renderCandidateList();
+    }
+  }
+
+  private getCandidatePreviewSrc(filePath: string): string | null {
+    const abstract = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(abstract instanceof TFile)) {
+      return null;
+    }
+    return this.app.vault.getResourcePath(abstract);
   }
 }

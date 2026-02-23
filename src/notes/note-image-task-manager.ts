@@ -1,286 +1,223 @@
 /**
  * Note Image Task Manager
  * 管理 Note 模式下的并发图片生成任务
- * 使用 Marker 占位符机制确保多任务完成后图片能正确插入
+ * 仅负责任务编排与结果回传，不直接修改笔记内容
  */
 
-import { Editor, Notice, TFile } from 'obsidian';
-import { CanvasAISettings } from '../settings/settings';
-import { ApiManager } from '../api/api-manager';
-import { t } from '../../lang/helpers';
-import type { App } from 'obsidian';
+import { Notice, TFile } from "obsidian";
+import { CanvasAISettings } from "../settings/settings";
+import { ApiManager } from "../api/api-manager";
+import { t } from "../../lang/helpers";
+import type { App } from "obsidian";
 
 // 图片任务状态
-type ImageTaskStatus = 'generating' | 'completed' | 'failed' | 'timeout';
+type ImageTaskStatus = "generating" | "completed" | "failed" | "timeout";
 
 // 单个图片生成任务
 interface ImageTask {
-    id: string;              // '01', '02'...
-    markerId: string;        // '<!-- 🍌 AI generating image #01... -->'
-    status: ImageTaskStatus;
-    startTime: number;
-    abortController: AbortController;
-    timeoutId: ReturnType<typeof setTimeout>;
+  id: string;
+  status: ImageTaskStatus;
+  startTime: number;
+  abortController: AbortController;
+  timeoutId: ReturnType<typeof setTimeout>;
 }
 
 // 图片生成选项
 interface ImageOptions {
-    resolution: string;
-    aspectRatio: string;
+  resolution: string;
+  aspectRatio: string;
 }
 
 // 输入图片
 interface InputImage {
-    base64: string;
-    mimeType: string;
-    role: string;
+  base64: string;
+  mimeType: string;
+  role: string;
+}
+
+export interface SavedImageInfo {
+  fileName: string;
+  filePath: string;
+}
+
+export interface GeneratedImageCandidate {
+  taskId: string;
+  fileName: string;
+  filePath: string;
+  notePath: string;
+  createdAt: number;
 }
 
 export class NoteImageTaskManager {
-    private tasks: Map<string, ImageTask> = new Map();
-    private taskCounter = 0;
-    private settings: CanvasAISettings;
-    private app: App;
+  private tasks: Map<string, ImageTask> = new Map();
+  private taskCounter = 0;
+  private settings: CanvasAISettings;
 
-    // 用于检测 Edit 操作是否进行中
-    private _isEditInProgress = false;
+  // 用于检测 Edit 操作是否进行中
+  private _isEditInProgress = false;
 
-    constructor(app: App, settings: CanvasAISettings) {
-        this.app = app;
-        this.settings = settings;
+  constructor(_app: App, settings: CanvasAISettings) {
+    this.settings = settings;
+  }
+
+  /**
+   * 更新设置引用（配置变更时调用）
+   */
+  updateSettings(settings: CanvasAISettings): void {
+    this.settings = settings;
+  }
+
+  /**
+   * 设置 Edit 进行中状态
+   */
+  setEditInProgress(value: boolean): void {
+    this._isEditInProgress = value;
+  }
+
+  /**
+   * 检查是否可以启动新的图片生成任务
+   */
+  canStartImageTask(): boolean {
+    const max = this.settings.maxParallelImageTasks || 3;
+    return this.tasks.size < max && !this._isEditInProgress;
+  }
+
+  /**
+   * 检查是否应该禁用 Edit 功能
+   */
+  isEditBlocked(): boolean {
+    return this.tasks.size > 0;
+  }
+
+  /**
+   * 获取当前活跃任务数量
+   */
+  getActiveTaskCount(): number {
+    return this.tasks.size;
+  }
+
+  /**
+   * 启动一个新的图片生成任务（返回候选图元数据）
+   */
+  async startTask(
+    prompt: string,
+    contextText: string,
+    inputImages: InputImage[],
+    imageOptions: ImageOptions,
+    apiManager: ApiManager,
+    file: TFile,
+    onSaveImage: (base64: string, file: TFile) => Promise<SavedImageInfo>,
+  ): Promise<GeneratedImageCandidate> {
+    // 检查是否可以启动
+    if (!this.canStartImageTask()) {
+      const max = this.settings.maxParallelImageTasks || 3;
+      if (this.tasks.size >= max) {
+        new Notice(t("Max parallel tasks reached", { max: String(max) }));
+      } else if (this._isEditInProgress) {
+        new Notice(t("Generation in progress"));
+      }
+      throw new Error(t("Generation in progress"));
     }
 
-    /**
-     * 更新设置引用（配置变更时调用）
-     */
-    updateSettings(settings: CanvasAISettings): void {
-        this.settings = settings;
+    const taskNum = String(++this.taskCounter).padStart(2, "0");
+    const task: ImageTask = {
+      id: taskNum,
+      status: "generating",
+      startTime: Date.now(),
+      abortController: new AbortController(),
+      timeoutId: 0 as unknown as ReturnType<typeof setTimeout>,
+    };
+    this.tasks.set(taskNum, task);
+
+    const timeoutSeconds = this.settings.imageGenerationTimeout || 120;
+    const timeoutMs = timeoutSeconds * 1000;
+    task.timeoutId = setTimeout(
+      () => this.handleTimeout(taskNum, timeoutSeconds),
+      timeoutMs,
+    );
+
+    try {
+      const result = await apiManager.generateImageWithRoles(
+        prompt,
+        inputImages,
+        contextText,
+        imageOptions.aspectRatio,
+        imageOptions.resolution,
+      );
+
+      clearTimeout(task.timeoutId);
+
+      const activeTask = this.tasks.get(taskNum);
+      if (!activeTask || activeTask.status === "timeout") {
+        throw new Error(
+          t("Image generation timed out", { seconds: String(timeoutSeconds) }),
+        );
+      }
+
+      const savedImage = await onSaveImage(result, file);
+      activeTask.status = "completed";
+
+      new Notice(t("Image generated"));
+      return {
+        taskId: taskNum,
+        fileName: savedImage.fileName,
+        filePath: savedImage.filePath,
+        notePath: file.path,
+        createdAt: Date.now(),
+      };
+    } catch (e) {
+      clearTimeout(task.timeoutId);
+
+      if (!this.tasks.has(taskNum)) {
+        throw e;
+      }
+
+      if ((e as Error).name !== "AbortError") {
+        task.status = "failed";
+        const message = e instanceof Error ? e.message : String(e);
+        console.error("Note Image Task: Generation failed:", message);
+        new Notice(t("Image generation failed"));
+      }
+      throw e;
+    } finally {
+      this.tasks.delete(taskNum);
     }
+  }
 
-    /**
-     * 设置 Edit 进行中状态
-     */
-    setEditInProgress(value: boolean): void {
-        this._isEditInProgress = value;
+  /**
+   * 处理超时
+   */
+  private handleTimeout(taskId: string, timeoutSeconds: number): void {
+    const task = this.tasks.get(taskId);
+    if (!task) return;
+
+    task.abortController.abort();
+    task.status = "timeout";
+    this.tasks.delete(task.id);
+    new Notice(
+      t("Image generation timed out", { seconds: String(timeoutSeconds) }),
+    );
+  }
+
+  /**
+   * 取消所有任务
+   */
+  cancelAllTasks(): void {
+    for (const task of this.tasks.values()) {
+      clearTimeout(task.timeoutId);
+      task.abortController.abort();
     }
+    this.tasks.clear();
+  }
 
-    /**
-     * 检查是否可以启动新的图片生成任务
-     */
-    canStartImageTask(): boolean {
-        const max = this.settings.maxParallelImageTasks || 3;
-        return this.tasks.size < max && !this._isEditInProgress;
+  /**
+   * 销毁管理器
+   */
+  destroy(): void {
+    for (const task of this.tasks.values()) {
+      clearTimeout(task.timeoutId);
+      task.abortController.abort();
     }
-
-    /**
-     * 检查是否应该禁用 Edit 功能
-     * 当有生图任务进行中时，禁用 Edit 以防止 Marker 被破坏
-     */
-    isEditBlocked(): boolean {
-        return this.tasks.size > 0;
-    }
-
-    /**
-     * 获取当前活跃任务数量
-     */
-    getActiveTaskCount(): number {
-        return this.tasks.size;
-    }
-
-    /**
-     * 启动一个新的图片生成任务
-     */
-    async startTask(
-        editor: Editor,
-        insertPos: { line: number; ch: number },
-        prompt: string,
-        contextText: string,
-        inputImages: InputImage[],
-        imageOptions: ImageOptions,
-        apiManager: ApiManager,
-        file: TFile,
-        onSaveImage: (base64: string, file: TFile) => Promise<string>
-    ): Promise<void> {
-        // 检查是否可以启动
-        if (!this.canStartImageTask()) {
-            const max = this.settings.maxParallelImageTasks || 3;
-            if (this.tasks.size >= max) {
-                new Notice(t('Max parallel tasks reached', { max: String(max) }));
-            } else if (this._isEditInProgress) {
-                new Notice(t('Generation in progress'));
-            }
-            return;
-        }
-
-        // 生成任务 ID 和 Marker
-        const taskNum = String(++this.taskCounter).padStart(2, '0');
-        const markerId = `<!-- 🍌 AI generating image #${taskNum}... -->`;
-        
-        const abortController = new AbortController();
-        const task: ImageTask = {
-            id: taskNum,
-            markerId,
-            status: 'generating',
-            startTime: Date.now(),
-            abortController,
-            timeoutId: 0 as unknown as ReturnType<typeof setTimeout>
-        };
-        this.tasks.set(taskNum, task);
-
-        // 插入 Marker 到文档
-        editor.replaceRange(`\n${markerId}\n`, insertPos);
-
-        // 设置超时
-        const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
-        task.timeoutId = setTimeout(() => this.handleTimeout(task, editor), timeoutMs);
-
-        try {
-            // 调用 API 生成图片
-            const result = await apiManager.generateImageWithRoles(
-                prompt,
-                inputImages,
-                contextText,
-                imageOptions.aspectRatio,
-                imageOptions.resolution
-            );
-            
-            clearTimeout(task.timeoutId);
-
-            // 检查任务是否已被取消（超时或手动取消）
-            if (!this.tasks.has(taskNum)) {
-                return;
-            }
-
-            // 保存图片到 vault
-            const imagePath = await onSaveImage(result, file);
-
-            // 替换 Marker 为图片
-            this.replaceMarkerWithImage(editor, markerId, imagePath);
-            task.status = 'completed';
-
-            new Notice(t('Image generated'));
-
-        } catch (e) {
-            clearTimeout(task.timeoutId);
-            
-            // 检查任务是否仍然存在
-            if (!this.tasks.has(taskNum)) {
-                return;
-            }
-
-            if ((e as Error).name !== 'AbortError') {
-                task.status = 'failed';
-                this.removeMarker(editor, markerId);
-                const message = e instanceof Error ? e.message : String(e);
-                console.error('Note Image Task: Generation failed:', message);
-                new Notice(t('Image generation failed'));
-            }
-        } finally {
-            this.tasks.delete(taskNum);
-        }
-    }
-
-    /**
-     * 替换 Marker 为图片链接
-     */
-    private replaceMarkerWithImage(editor: Editor, markerId: string, imagePath: string): void {
-        const content = editor.getValue();
-        const markerIndex = content.indexOf(markerId);
-        
-        if (markerIndex === -1) {
-            // Marker 被用户删除，放弃插入
-            console.warn('Note Image Task: Marker not found, skipping image insertion');
-            return;
-        }
-
-        // 计算 Marker 位置
-        const beforeMarker = content.substring(0, markerIndex);
-        const linesBefore = beforeMarker.split('\n');
-        const line = linesBefore.length - 1;
-        const ch = linesBefore[linesBefore.length - 1].length;
-        
-        const startPos = { line, ch };
-        const endPos = { line, ch: ch + markerId.length };
-
-        editor.replaceRange(`![[${imagePath}]]`, startPos, endPos);
-    }
-
-    /**
-     * 处理超时
-     */
-    private handleTimeout(task: ImageTask, editor: Editor): void {
-        task.abortController.abort();
-        task.status = 'timeout';
-        this.removeMarker(editor, task.markerId);
-        this.tasks.delete(task.id);
-        
-        const seconds = this.settings.imageGenerationTimeout || 120;
-        new Notice(t('Image generation timed out', { seconds: String(seconds) }));
-    }
-
-    /**
-     * 从文档中移除 Marker
-     */
-    private removeMarker(editor: Editor, markerId: string): void {
-        const content = editor.getValue();
-        const markerIndex = content.indexOf(markerId);
-        
-        if (markerIndex === -1) {
-            return;
-        }
-
-        // 计算 Marker 的起始和结束位置
-        // 注意：插入时我们添加了前后的换行符 `\n${markerId}\n`
-        // 移除时我们应该小心，尽量只移除我们添加的部分
-        // 这里简化策略：定位 markerId，扩展到前后可能存在的换行
-        
-        const pos = editor.offsetToPos(markerIndex);
-        const endPos = editor.offsetToPos(markerIndex + markerId.length);
-        
-        // 检查 text around marker
-        let endOffset = markerIndex + markerId.length;
-        
-        // 尝试移除后继换行
-        if (endOffset < content.length && content[endOffset] === '\n') {
-            endOffset += 1;
-        }
-
-        // 使用 replaceRange 移除
-        // 如果前后都有换行，我们保留一个换行，即只移除 `\n${markerId}` 或 `${markerId}\n`
-        // 还是还原回插入前的状态？
-        // 插入是 `\n${markerId}\n` (in strict sense `replaceRange('\n'+id+'\n', pos)`)
-        // 所以我们应该移除 `\n${markerId}\n` 并替换为 `\n` ? 
-        // 实际上 `text.replace('\n'+id+'\n', '\n')` 等价于移除了 `\n`+id 或 id+`\n`
-        
-        // 让我们只移除 `\n` + markerId
-        if (markerIndex > 0 && content[markerIndex - 1] === '\n') {
-             editor.replaceRange('', editor.offsetToPos(markerIndex - 1), endPos);
-        } else {
-             // 只有 marker
-             editor.replaceRange('', pos, endPos);
-        }
-    }
-
-    /**
-     * 取消所有任务
-     */
-    cancelAllTasks(editor: Editor): void {
-        for (const task of this.tasks.values()) {
-            clearTimeout(task.timeoutId);
-            task.abortController.abort();
-            this.removeMarker(editor, task.markerId);
-        }
-        this.tasks.clear();
-    }
-
-    /**
-     * 销毁管理器
-     */
-    destroy(): void {
-        for (const task of this.tasks.values()) {
-            clearTimeout(task.timeoutId);
-            task.abortController.abort();
-        }
-        this.tasks.clear();
-    }
+    this.tasks.clear();
+  }
 }

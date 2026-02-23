@@ -1,305 +1,121 @@
 [简体中文](#zh-cn) | [English](#en-us)
 
-[https://www.youtube.com/watch?v=FN8d_2q4evo](https://www.youtube.com/watch?v=FN8d_2q4evo)
-
 <span id="zh-cn"></span>
 
-# Canvas Banana (Obsidian Plugin)
+# Banana Studio (Obsidian Plugin)
 
-Canvas Banana 是一个原名为 Obsidian Canvas AI 的插件，现在它不仅仅为 Canvas（白板）提供 AI 增强，更是一个全能的 Obsidian AI 助手。它深度集成了 Gemini / OpenAI / Antigravity 等先进 AI 模型，让你可以在 **白板** 和 **笔记** 中无缝进行智能对话、文本创作和图像生成。
+Banana Studio 是一个面向 Obsidian 笔记的 AI 生图插件，当前版本专注于一个流程：
 
-该插件的核心理念是"上下文感知"——无论是白板中的节点，还是笔记中的选段，它都能精准理解并以此为背景协助你的创作。
+**在侧边栏生成图片 -> 选择图片 -> 插入到当前笔记**。
 
-<br><img width="2200" height="1185" alt="image" src="https://github.com/user-attachments/assets/94bfc72e-6823-42da-8f3a-2c9da7bb77b8" />
+不再包含 Chat / Edit / Canvas 相关功能。
 
+## 功能概览
 
+- 侧边栏生图（一次并发生成 4 张候选图）
+- 候选图列表（可预览、插入、丢弃）
+- 插入到当前笔记（优先光标位置，失败回退文末）
+- 过期候选图自动清理（TTL）
+- 支持多 Provider（Gemini / OpenRouter / Yunwu / GPTGod / AntigravityTools）
+- 支持图片模型快速切换、分辨率、比例、图片提示词预设
 
-## 🌟 核心功能
+## 安装（手动）
 
-*   **🤖 上下文感知对话 (Chat)**
-    *   智能识别选中的 Canvas 节点内容作为对话背景。
-    *   在白板中直接与 AI 探讨想法、总结内容或扩展思路。
-    *   支持调节 "Temperature" 以控制回答的创造性。
-    *   **流式响应 (Streaming)**：支持所有主流 Provider (Gemini, OpenAI, GptGod, Antigravity等) 的打字机流式输出。
+1. 在 [Releases](https://github.com/Zanetach/Banana-Studio/releases) 下载最新版本。
+2. 解压到你的 vault：`.obsidian/plugins/Banana-Studio/`。
+3. 重启 Obsidian，在 `设置 -> 第三方插件` 中启用 `Banana Studio`。
 
-*   **🎨 AI 图像生成 (Image Generation)**
-    *   将文字描述转化为高质量图片。
-    *   提供丰富的 **纵横比 (Ratio)** 选择：1:1, 16:9, 4:3, 9:16 等。
-    *   支持多种 **分辨率 (Resolution)**：1K, 2K, 4K。
-    *   支持引用选中节点的文本作为图像生成的 Prompt。
- 
-*   **🎨 canvas 节点生成 (Node Generation)**
-*   *   让llm以脑图的形式回答你的问题。
+## 使用流程
 
-*   **⚡ 高效的工作流**
-    *   **多任务并发**：支持“发射后不管”，你可以同时发起多个生成任务，无需等待上一个完成。
-    *   **提示词预设 (Prompt Presets)**：内置预设管理功能，支持保存、重命名和快速调用常用的提示词。
+1. 打开一篇 Markdown 笔记。
+2. 点击左侧 Ribbon 的香蕉图标，打开侧边栏。
+3. 在侧边栏输入提示词（可选中正文作为上下文）。
+4. 设置图片模型、分辨率、比例后点击 `Generate`。
+5. 在候选图卡片点击：
+   - `Insert`：插入到当前笔记
+   - `Discard`：丢弃并删除候选文件
 
-*   **📝 笔记 AI 助手 (Note AI Assistant)** [NEW]
-    *   **侧边栏副驾驶 (Sidebar Co-pilot)**: 类似 Google Gemini Canvas 的侧边栏体验。
-        *   **Chat**: 与当前文档进行多轮对话，支持引用选中内容。
-        *   **Edit**: 全文级或段落级修改建议，支持 Diff 视图审阅，确认后才应用。
-        *   **Image**: "所见即所得"的文档内生图，支持基于上下文生成配图。
-    *   **智能悬浮编辑**: 选中笔记文本即可唤起 AI 进行润色、翻译或改写。支持实时显示 AI **思考过程 (Thinking Process)**。
-   
-*   **⚡ 增强的 Canvas 编辑**
-    *   **节点级原位编辑**: 直接在 Canvas 节点内部选中文字进行 AI 修改，AI 会同时参考连线节点的上下文。
-    *   **文件节点支持**: 支持直接编辑 Canvas 中引用的 .md 文件节点。
+## 验证建议
 
-*   **🌍 多 API 支持**
-    *   支持 **Gemini** (Google), **OpenRouter**, **Yunwu**, **Antigravity Tools** 等多种 API 提供商。
-    *   支持自定义 Base URL 以适配各种 OpenAI 兼容接口。
-      
-## ⚠️ 免责声明 (Disclaimer)
+- 功能验证
+  - 能打开侧边栏并发起生图
+  - 能看到候选图列表
+  - `Insert` 后图片成功写入笔记
+  - `Discard` 后文件被移除
+- 构建验证（开发者）
 
-使用本插件即代表您同意以下条款：
+```bash
+npm install
+npm run build
+```
 
-1.  **第三方服务**：本插件的功能实现依赖于第三方 API 服务（如 OpenRouter AI 或 Yunwu AI）。插件作者与这些服务提供商无直接关联。
-2.  **费用自理**：调用 AI 模型可能产生 API 使用费用，该费用由 API 服务商收取，请用户自行在对应平台充值和管理。
-3.  **内容合规**：用户应确保使用生成的内容符合当地法律法规及 OpenAI/Google 等模型提供商的使用政策。插件作者不对用户生成的内容承担法律责任。
-4.  **隐私安全**：您的 API Key 仅保存在本地 Obsidian 配置中，插件不会将其上传至除此之外的任何服务器。但请注意，对话内容会被发送至第三方 API 此外进行处理。
+## 免责声明
 
-## 📥 安装指南 (手动安装)
+- 插件依赖第三方模型 API，调用可能产生费用。
+- API Key 保存在本地 Obsidian 配置中。
+- 生成内容合规性由使用者自行负责。
 
-由于本插件目前可能处于测试阶段或未上架社区商店，请按照以下步骤手动安装：
+## License
 
-1.  **插件下载**
-    *  在[releases](https://github.com/LiuYangArt/obsidian-canvas-banana/releases)中下载最新版本的插件 zip。
-
-2.  **创建插件文件夹**
-    *   打开你的 Obsidian 仓库目录。
-    *   进入 `.obsidian/plugins/` 目录。
-    *   把zip包解压进去。<br><img width="803" height="573" alt="image" src="https://github.com/user-attachments/assets/e2d07451-3d49-41b5-888e-484d853cb22e" />
-
-
-
-
-3.  **启用插件**
-    *   重启 Obsidian。
-    *   进入 **设置** -> **第三方插件**。
-    *   关闭 "安全模式"（如果尚未关闭）。
-    *   在插件列表中找到 "Canvas Banana" 并点击开关启用。
-    <br><img width="1601" height="157" alt="image" src="https://github.com/user-attachments/assets/b07f3f52-61bc-454d-90c7-c531fe129f73" />
-
-
-## 🚀 功能操作指南
-
-### 1. 配置 API Key
-首次使用前，请先配置 API：
-1.  打开 Obsidian **设置** -> **Canvas Banana**。
-2.  选择 **API Provider** 。
-3.  填入你的 **API Key**。
-4.  (可选) 选择或自定义你偏好的 Text/Image 模型。
-
-- 获得api [yunwu](https://yunwu.ai/register?aff=VE3i) | [gptgod](https://gptgod.site/#/register?invite_code=5ax35dxlk4bys0j7jnzqypwkc)
-
-### 2. 唤起操作面板
-1.  打开一个 **Canvas (白板)** 文件。
-2.  使用鼠标框选或点击选中一个或多个节点。
-3.  在节点上方自动弹出的原生菜单条中，点击 **香蕉图标 (🍌)**。<br><img width="297" height="60" alt="image" src="https://github.com/user-attachments/assets/ae552ae8-5ec0-404b-be19-a44292eb0fe4" />
-
-4.  **Canvas Banana** 悬浮面板将会出现在选中框的右侧。
-5.  只选中text node， 且prompt中没有内容时，则把text node本身的内容作为prompt。
-
-### 3. 使用 AI 对话 (Text Mode)
-*   切换到 **Text** 标签页。
-*   在输入框中输入你的指令或问题。
-*   (可选) 选择一个 **Preset** (预设) 快速填入 Prompt。
-*   点击 **Generate**。
-*   AI 的回复将作为一个新的卡片节点生成在白板上。
-
-### 4. 生成图像 (Image Mode)
-*   切换到 **Image** 标签页。
-*   在输入框描述你想要的画面（留空则默认使用选中节点的文本）。
-*   调整 **Resolution** (分辨率) 和 **Ratio** (比例)。
-*   点击 **Generate**。
-*   生成的图片将作为图片节点插入到白板中。
-
-### 5. 管理 Prompt 预设
-在面板输入框上方有一排工具按钮：
-*   **+ (Add)**: 将当前输入框的内容保存为新预设。
-*   **💾 (Save)**: 更新当前选中的预设内容。
-*   **❌ (Delete)**: 删除当前选中的预设。
-*   **📖 (Rename)**: 重命名当前预设。
-*   **📌 (Pin)**: 固定悬浮面板（避免自动关闭）。
-
-### 6. 笔记 AI 助手 (Note Mode)
-插件不仅支持 Canvas，也完美适配普通 Markdown 笔记编辑：
-*   **侧边栏副驾驶 (Sidebar Co-pilot)**: 点击 Obsidian 右侧边栏的 🍌 图标打开 Side Panel。
-    *   **Chat**: 纯对话模式，基于文档上下文进行问答。支持 "Insert to cursor" 将 AI 回复插入文档。
-    *   **Edit**: 选中一段文本（或不选以针对全文），输入指令。AI 的修改建议会以 Diff 形式呈现，点击 "Confirm" 应用修改。支持 Thinking 模型流式输出。
-    *   **Image**: 在文档中生成图片。支持选中一段文字作为 Prompt，或者直接输入描述。
-*   **悬浮编辑**: 在笔记中选中文本，点击浮现的 🍌 图标，即可快速唤起悬浮面板进行 AI 编辑或生图。
-
-## 📄 License (开源协议)
-
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
-
-本项目采用 GNU General Public License v3.0 开源协议，详情请参阅 [LICENSE](LICENSE) 文件。
+GPL-3.0，见 [LICENSE](LICENSE)。
 
 ---
 
 <span id="en-us"></span>
-**Canvas Banana** (formerly Obsidian Canvas AI) is a comprehensive AI assistant for Obsidian. It goes beyond just **Canvas** enhancement to provide a seamless AI experience across both **Canvas** and **Markdown Notes**. Deeply integrated with advanced models like Gemini, OpenAI, and Antigravity, it empowers you to chat, create text, and generate images anywhere.
 
-The core philosophy is "**Context Awareness**"—whether it's a node on a whiteboard or a selection in a note, the plugin understands the context to assist your creative process effectively.
+# Banana Studio (Obsidian Plugin)
 
-<br><img width="2200" height="1185" alt="image" src="https://github.com/user-attachments/assets/94bfc72e-6823-42da-8f3a-2c9da7bb77b8" />
+Banana Studio is an AI image plugin for Obsidian notes, focused on one workflow:
 
+**Generate images in the sidebar -> choose a candidate -> insert into the current note**.
 
-## 🌟 Core Features
+Chat / Edit / Canvas features are no longer part of this version.
 
-*   **🤖 Context-Aware Chat**
-    *   Intelligently recognizes selected Canvas node content as conversation context.
-    *   Discuss ideas, summarize content, or brainstorm with AI directly on the canvas.
-    *   Supports "Temperature" adjustment to control the creativity of responses.
-    *   **Streaming Support**: Typewriter-style streaming response for all major providers (Gemini, OpenAI, GptGod, Antigravity, etc.).
+## Features
 
-*   **🎨 AI Image Generation**
-    *   Transforms text descriptions into high-quality images.
-    *   Offers rich **Aspect Ratio** options: 1:1, 16:9, 4:3, 9:16, etc.
-    *   Supports multiple **Resolutions**: 1K, 2K, 4K.
-    *   Capable of using selected node text as the prompt for image generation.
+- Sidebar image generation (4 candidates per run)
+- Candidate list (preview, insert, discard)
+- Insert into current note (cursor-first, EOF fallback)
+- Auto cleanup for expired candidates (TTL)
+- Multi-provider support (Gemini / OpenRouter / Yunwu / GPTGod / AntigravityTools)
+- Image model quick switch, resolution, aspect ratio, prompt presets
 
-*   **🧠 Canvas Node Generation**
-    *   Let the LLM answer your questions in the form of a mind map or interconnected nodes.
+## Installation (Manual)
 
-*   **⚡ Efficient Workflow**
-    *   **Concurrency**: Supports "fire and forget"—initiate multiple generation tasks simultaneously without waiting.
-    *   **Prompt Presets**: Built-in preset management to save, rename, and quickly reuse common prompts.
+1. Download the latest release from [Releases](https://github.com/LiuYangArt/obsidian-canvas-banana/releases).
+2. Extract into your vault at `.obsidian/plugins/canvas-banana/`.
+3. Restart Obsidian and enable `Banana Studio` in `Settings -> Community Plugins`.
 
-*   **📝 Note AI Assistant** [NEW]
-    *   **Sidebar Co-pilot**: A Gemini Canvas-like experience in your sidebar.
-        *   **Chat**: Multi-turn conversation with document context.
-        *   **Edit**: Full-text or selection-based editing with Diff review. Supports streaming output from Thinking models.
-        *   **Image**: WYSIWYG image generation directly in your notes.
-    *   **Smart Floating Edit**: Select text in notes to trigger AI for polishing, translating, or rewriting. Supports real-time visualization of the **Thinking Process**.
+## Workflow
 
+1. Open a Markdown note.
+2. Click the banana ribbon icon to open the sidebar.
+3. Enter a prompt (optionally select note text as context).
+4. Set model/resolution/aspect ratio and click `Generate`.
+5. For each candidate image:
+   - `Insert`: insert into the current note
+   - `Discard`: drop candidate and delete file
 
-## 📄 License (开源协议)
+## Validation
 
-This project is licensed under the GNU General Public License v3.0 - see the [LICENSE](LICENSE) file for details.
+- Functional checks
+  - Sidebar opens and can generate images
+  - Candidate list is visible
+  - `Insert` adds image embed to note
+  - `Discard` removes candidate file
+- Build check (for developers)
 
-本项目采用 GNU General Public License v3.0 开源协议，详情请参阅 [LICENSE](LICENSE) 文件。
+```bash
+npm install
+npm run build
+```
 
----
+## Disclaimer
 
-<span id="en-us"></span>
-**Canvas Banana** (formerly Obsidian Canvas AI) is a comprehensive AI assistant for Obsidian. It goes beyond just **Canvas** enhancement to provide a seamless AI experience across both **Canvas** and **Markdown Notes**. Deeply integrated with advanced models like Gemini, OpenAI, and Antigravity, it empowers you to chat, create text, and generate images anywhere.
+- This plugin depends on third-party model APIs and usage may incur cost.
+- API keys are stored locally in Obsidian config.
+- Users are responsible for content compliance.
 
-The core philosophy is "**Context Awareness**"—whether it's a node on a whiteboard or a selection in a note, the plugin understands the context to assist your creative process effectively.
+## License
 
-<br><img width="2200" height="1185" alt="image" src="https://github.com/user-attachments/assets/94bfc72e-6823-42da-8f3a-2c9da7bb77b8" />
-
-
-## 🌟 Core Features
-
-*   **🤖 Context-Aware Chat**
-    *   Intelligently recognizes selected Canvas node content as conversation context.
-    *   Discuss ideas, summarize content, or brainstorm with AI directly on the canvas.
-    *   Supports "Temperature" adjustment to control the creativity of responses.
-    *   **Streaming Support**: Typewriter-style streaming response for all major providers (Gemini, OpenAI, GptGod, Antigravity, etc.).
-
-*   **🎨 AI Image Generation**
-    *   Transforms text descriptions into high-quality images.
-    *   Offers rich **Aspect Ratio** options: 1:1, 16:9, 4:3, 9:16, etc.
-    *   Supports multiple **Resolutions**: 1K, 2K, 4K.
-    *   Capable of using selected node text as the prompt for image generation.
-
-*   **🧠 Canvas Node Generation**
-    *   Let the LLM answer your questions in the form of a mind map or interconnected nodes.
-
-*   **⚡ Efficient Workflow**
-    *   **Concurrency**: Supports "fire and forget"—initiate multiple generation tasks simultaneously without waiting.
-    *   **Prompt Presets**: Built-in preset management to save, rename, and quickly reuse common prompts.
-
-*   **📝 Note AI Assistant** [NEW]
-    *   **Sidebar Co-pilot**: A Gemini Canvas-like experience in your sidebar.
-        *   **Chat**: Multi-turn conversation with document context.
-        *   **Edit**: Full-text or selection-based editing with Diff review.
-        *   **Image**: WYSIWYG image generation directly in your notes.
-    *   **Smart Floating Edit**: Select text in notes to trigger AI for polishing, translating, or rewriting.
-
-*   **⚡ Enhanced Canvas Editing**
-    *   **In-Place Node Edit**: Edit text *inside* a Canvas node with AI, which understands the context from connected nodes.
-    *   **File Node Support**: Directly edit .md file nodes referenced in the Canvas.
-
-*   **🌍 Multi-API Support**
-    *   Supports **Gemini**, **OpenRouter**, **Yunwu**, **Antigravity Tools**, and more.
-    *   Customizable Base URL for OpenAI-compatible providers.
-
-## ⚠️ Disclaimer
-
-By using this plugin, you agree to the following terms:
-
-1.  **Third-Party Services**: This plugin relies on third-party API services (e.g., OpenRouter AI, Yunwu AI, Google Gemini). The plugin author is not directly affiliated with these providers.
-2.  **Costs**: Calling AI models may incur API usage fees charged by the service provider. Please manage your billing on the respective platforms.
-3.  **Content Compliance**: Users are responsible for ensuring generated content complies with local laws and the policies of model providers. The author assumes no liability for user-generated content.
-4.  **Privacy**: Your API Key is stored locally in your Obsidian config and is not uploaded to any server by the plugin. However, conversation content is sent to the third-party API for processing.
-
-## 📥 Installation Guide (Manual)
-
-Since this plugin may be in beta or not yet in the community store, please follow these steps:
-
-1.  **Download the Plugin**
-    *   Get latest version in [releases](https://github.com/LiuYangArt/obsidian-canvas-banana/releases).
-
-2.  **Create Plugin Folder**
-    *   Open your Obsidian vault directory.
-    *   Navigate to `.obsidian/plugins/`.
-    *   Extract the zip package there.<br><img width="803" height="573" alt="image" src="https://github.com/user-attachments/assets/e2d07451-3d49-41b5-888e-484d853cb22e" />
-
-3.  **Enable the Plugin**
-    *   Restart Obsidian.
-    *   Go to **Settings** -> **Community Plugins**.
-    *   Turn off "Restricted Mode".
-    *   Find "Canvas Banana" in the list and toggle it on.
-    <br><img width="1601" height="157" alt="image" src="https://github.com/user-attachments/assets/b07f3f52-61bc-454d-90c7-c531fe129f73" />
-
-
-## 🚀 User Guide
-
-### 1. Configure API Key
-Before first use:
-1.  Go to **Settings** -> **Canvas Banana**.
-2.  Select **API Provider** .
-3.  Enter your **API Key**.
-4.  (Optional) Select custom models for Text/Image.
-
-
-### 2. Activate the Panel
-1.  Open a **Canvas** file.
-2.  Select one or more nodes.
-3.  Click the **Banana Icon (🍌)** in the floating menu above the node.<br><img width="297" height="60" alt="image" src="https://github.com/user-attachments/assets/ae552ae8-5ec0-404b-be19-a44292eb0fe4" />
-4.  The **Canvas Banana** panel appears.
-5.  *Tip*: If you select a text node with an empty prompt box, the node's content is automatically used as the prompt.
-
-### 3. AI Chat (Text Mode)
-*   Switch to the **Text** tab.
-*   Type your question or instruction.
-*   (Optional) Use a **Preset**.
-*   Click **Generate**.
-*   The output will appear as a new card on the canvas.
-
-### 4. Image Generation (Image Mode)
-*   Switch to the **Image** tab.
-*   Describe the image (or leave blank to use selected node text).
-*   Set **Resolution** and **Ratio**.
-*   Click **Generate**.
-*   The image appears as a new node.
-
-### 5. Manage Prompt Presets
-Use the icons above the input box:
-*   **+ (Add)**: Save current text as a preset.
-*   **💾 (Save)**: Update the selected preset.
-*   **❌ (Delete)**: Remove the selected preset.
-*   **📖 (Rename)**: Rename the selected preset.
-*   **📌 (Pin)**: Pin the floating panel.
-
-### 6. Note AI Assistant (Note Mode)
-The plugin perfectly supports standard Markdown notes in addition to Canvas:
-*   **Sidebar Co-pilot**: Click the 🍌 icon in the right ribbon to open the Side Panel.
-    *   **Chat**: Chat with your document. Use "Insert to cursor" to add AI responses to your note.
-    *   **Edit**: Select text (or leave empty for full note), enter instructions. Review changes in the Diff view and click "Confirm" to apply.
-    *   **Image**: Generate images. Use selected text as prompt or enter a description.
-*   **Floating Edit**: Select text in any note and click the floating 🍌 icon to quick start AI editing or image generation.
+GPL-3.0, see [LICENSE](LICENSE).
