@@ -1,6 +1,6 @@
 {
     "name": "banana-studio",
-    "version": "0.2.0",
+    "version": "0.2.1",
     "description": "Sidebar AI image generation for Obsidian notes.",
     "main": "main.js",
     "scripts": {
