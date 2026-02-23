@@ -1,4 +1,12 @@
-import { ItemView, WorkspaceLeaf, Notice, setIcon, TFile } from "obsidian";
+import {
+  ItemView,
+  WorkspaceLeaf,
+  Notice,
+  setIcon,
+  TFile,
+  Modal,
+  App,
+} from "obsidian";
 import type CanvasAIPlugin from "../../main";
 import type { PromptPreset, QuickSwitchModel } from "../settings/settings";
 import { t } from "../../lang/helpers";
@@ -11,6 +19,130 @@ type CandidateStatus = "ready" | "inserted" | "discarded";
 
 interface SidebarImageCandidate extends GeneratedImageCandidate {
   status: CandidateStatus;
+}
+
+interface PresetEditorResult {
+  selectedId: string;
+  name: string;
+  prompt: string;
+}
+
+class PresetEditorModal extends Modal {
+  private readonly presets: PromptPreset[];
+  private selectedId: string;
+  private nameValue: string = "";
+  private promptValue: string = "";
+  private readonly onSave: (result: PresetEditorResult) => void;
+
+  constructor(
+    app: App,
+    presets: PromptPreset[],
+    initialPresetId: string,
+    onSave: (result: PresetEditorResult) => void,
+  ) {
+    super(app);
+    this.presets = presets;
+    this.selectedId = initialPresetId;
+    this.onSave = onSave;
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: "添加 / 选择预设" });
+
+    const presetRow = contentEl.createDiv("canvas-ai-modal-row");
+    presetRow.createEl("label", { text: "已有预设" });
+
+    const presetSelect = presetRow.createEl("select");
+    presetSelect.createEl("option", { value: "", text: "新建预设" });
+    this.presets.forEach((p) => {
+      presetSelect.createEl("option", { value: p.id, text: p.name });
+    });
+    if (this.selectedId) {
+      presetSelect.value = this.selectedId;
+    }
+
+    const nameRow = contentEl.createDiv("canvas-ai-modal-row");
+    nameRow.createEl("label", { text: "预设名称" });
+    const nameInput = nameRow.createEl("input", {
+      attr: { type: "text", placeholder: "输入预设名称" },
+    });
+
+    const promptRow = contentEl.createDiv("canvas-ai-modal-row");
+    promptRow.createEl("label", { text: "预设 Prompt" });
+    const promptInput = promptRow.createEl("textarea", {
+      attr: { rows: "6", placeholder: "输入预设 Prompt 内容" },
+    });
+
+    const applySelectedPreset = (id: string): void => {
+      if (!id) {
+        nameInput.value = "";
+        promptInput.value = "";
+        this.nameValue = "";
+        this.promptValue = "";
+        return;
+      }
+
+      const preset = this.presets.find((p) => p.id === id);
+      if (!preset) return;
+
+      nameInput.value = preset.name;
+      promptInput.value = preset.prompt;
+      this.nameValue = preset.name;
+      this.promptValue = preset.prompt;
+    };
+
+    applySelectedPreset(this.selectedId);
+
+    presetSelect.addEventListener("change", () => {
+      this.selectedId = presetSelect.value;
+      applySelectedPreset(this.selectedId);
+    });
+
+    nameInput.addEventListener("input", () => {
+      this.nameValue = nameInput.value;
+    });
+
+    promptInput.addEventListener("input", () => {
+      this.promptValue = promptInput.value;
+    });
+
+    const actions = contentEl.createDiv("modal-button-container");
+    const cancelBtn = actions.createEl("button", { text: t("Cancel") });
+    cancelBtn.addEventListener("click", () => this.close());
+
+    const saveBtn = actions.createEl("button", {
+      text: "保存",
+      cls: "mod-cta",
+    });
+    saveBtn.addEventListener("click", () => {
+      const name = this.nameValue.trim();
+      const prompt = this.promptValue.trim();
+
+      if (!name) {
+        new Notice("请输入预设名称");
+        return;
+      }
+      if (!prompt) {
+        new Notice("请输入预设 Prompt 内容");
+        return;
+      }
+
+      this.close();
+      this.onSave({
+        selectedId: this.selectedId,
+        name,
+        prompt,
+      });
+    });
+
+    setTimeout(() => nameInput.focus(), 50);
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
 }
 
 export class SideBarCoPilotView extends ItemView {
@@ -26,8 +158,7 @@ export class SideBarCoPilotView extends ItemView {
   private resolutionSelect: HTMLSelectElement;
   private aspectRatioSelect: HTMLSelectElement;
   private presetSelect: HTMLSelectElement;
-  private presetNameInput: HTMLInputElement;
-  private savePresetBtn: HTMLButtonElement;
+  private presetManageBtn: HTMLButtonElement;
 
   private imagePresets: PromptPreset[] = [];
   private quickSwitchImageModels: QuickSwitchModel[] = [];
@@ -114,27 +245,23 @@ export class SideBarCoPilotView extends ItemView {
 
     const footer = container.createDiv("canvas-ai-palette-footer");
 
-    const presetRow = footer.createDiv("canvas-ai-preset-row");
-    presetRow.createEl("label", { text: "预设" });
+    const zone1 = footer.createDiv("sidebar-zone-1");
 
-    this.presetSelect = presetRow.createEl("select", {
+    const presetSection = zone1.createDiv("sidebar-preset-section");
+    presetSection.createEl("label", { text: "预设" });
+    const presetControls = presetSection.createDiv("sidebar-preset-controls");
+
+    this.presetSelect = presetControls.createEl("select", {
       cls: "canvas-ai-preset-select",
     });
 
-    this.presetNameInput = presetRow.createEl("input", {
-      cls: "canvas-ai-preset-name-input",
-      attr: {
-        type: "text",
-        placeholder: "输入预设名",
-      },
+    this.presetManageBtn = presetControls.createEl("button", {
+      cls: "canvas-ai-preset-manage-btn",
+      text: "添加/选择预设",
     });
 
-    this.savePresetBtn = presetRow.createEl("button", {
-      cls: "canvas-ai-preset-save-btn",
-      text: "保存",
-    });
-
-    const optionsRow = footer.createDiv("canvas-ai-image-options");
+    const paramsSection = zone1.createDiv("sidebar-params-section");
+    const optionsRow = paramsSection.createDiv("canvas-ai-image-options");
 
     const modelGroup = optionsRow.createDiv("canvas-ai-option-group");
     modelGroup.createEl("label", { text: "Image Model" });
@@ -143,7 +270,7 @@ export class SideBarCoPilotView extends ItemView {
     });
 
     const resolutionGroup = optionsRow.createDiv("canvas-ai-option-group");
-    resolutionGroup.createEl("label", { text: t("Resolution") });
+    resolutionGroup.createEl("label", { text: "分辨率" });
     this.resolutionSelect = resolutionGroup.createEl("select");
     ["1K", "2K", "4K"].forEach((v) => {
       this.resolutionSelect.createEl("option", { value: v, text: v });
@@ -156,7 +283,9 @@ export class SideBarCoPilotView extends ItemView {
       this.aspectRatioSelect.createEl("option", { value: v, text: v });
     });
 
-    this.inputEl = footer.createEl("textarea", {
+    const zone2 = footer.createDiv("sidebar-zone-2");
+
+    this.inputEl = zone2.createEl("textarea", {
       cls: "canvas-ai-prompt-input",
       attr: {
         placeholder: "Describe image to generate",
@@ -164,7 +293,7 @@ export class SideBarCoPilotView extends ItemView {
       },
     });
 
-    const actionRow = footer.createDiv("canvas-ai-action-row");
+    const actionRow = zone2.createDiv("canvas-ai-action-row");
     this.generateBtn = actionRow.createEl("button", {
       cls: "canvas-ai-generate-btn",
       text: "Generate",
@@ -188,13 +317,12 @@ export class SideBarCoPilotView extends ItemView {
       const selected = this.imagePresets.find((p) => p.id === selectedId);
       if (selected) {
         this.inputEl.value = selected.prompt || "";
-        this.presetNameInput.value = selected.name || "";
         this.updateGenerateButtonState();
       }
     });
 
-    this.savePresetBtn.addEventListener("click", () => {
-      void this.saveCurrentPreset();
+    this.presetManageBtn.addEventListener("click", () => {
+      this.openPresetEditor();
     });
 
     this.imageModelSelect.addEventListener("change", () => {
@@ -284,6 +412,59 @@ export class SideBarCoPilotView extends ItemView {
     }
   }
 
+  private openPresetEditor(): void {
+    const modal = new PresetEditorModal(
+      this.app,
+      this.imagePresets,
+      this.presetSelect?.value || "",
+      async ({ selectedId, name, prompt }) => {
+        let idToSelect = selectedId;
+
+        if (selectedId) {
+          const target = this.imagePresets.find((p) => p.id === selectedId);
+          if (target) {
+            target.name = name;
+            target.prompt = prompt;
+          } else {
+            idToSelect = "";
+          }
+        }
+
+        if (!idToSelect) {
+          const existedByName = this.imagePresets.find((p) => p.name === name);
+          if (existedByName) {
+            existedByName.prompt = prompt;
+            idToSelect = existedByName.id;
+          } else {
+            const created: PromptPreset = {
+              id: this.generatePresetId(),
+              name,
+              prompt,
+            };
+            this.imagePresets.push(created);
+            idToSelect = created.id;
+          }
+        }
+
+        this.plugin.settings.imagePresets = [...this.imagePresets];
+        await this.plugin.saveSettings();
+
+        this.rebuildPresetSelect(idToSelect);
+        this.inputEl.value = prompt;
+        this.updateGenerateButtonState();
+        new Notice("预设已保存");
+      },
+    );
+
+    modal.open();
+  }
+
+  private generatePresetId(): string {
+    return `${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
+  }
+
   private registerActiveFileListener(): void {
     this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -335,49 +516,6 @@ export class SideBarCoPilotView extends ItemView {
     if (notesHandler) {
       notesHandler.clearHighlightForSidebar();
     }
-  }
-
-  private async saveCurrentPreset(): Promise<void> {
-    const name = this.presetNameInput.value.trim();
-    const prompt = this.inputEl.value.trim();
-
-    if (!name) {
-      new Notice("请输入预设名称");
-      return;
-    }
-
-    if (!prompt) {
-      new Notice("请输入 Prompt 内容");
-      return;
-    }
-
-    const existing = this.imagePresets.find((p) => p.name === name);
-    let selectedId = "";
-
-    if (existing) {
-      existing.prompt = prompt;
-      selectedId = existing.id;
-    } else {
-      const created: PromptPreset = {
-        id: this.generatePresetId(),
-        name,
-        prompt,
-      };
-      this.imagePresets.push(created);
-      selectedId = created.id;
-    }
-
-    this.plugin.settings.imagePresets = [...this.imagePresets];
-    await this.plugin.saveSettings();
-    this.rebuildPresetSelect(selectedId);
-
-    new Notice("预设已保存");
-  }
-
-  private generatePresetId(): string {
-    return `${Date.now().toString(36)}-${Math.random()
-      .toString(36)
-      .slice(2, 10)}`;
   }
 
   private async handleGenerate(): Promise<void> {

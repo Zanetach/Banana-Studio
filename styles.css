@@ -1499,3 +1499,116 @@
 .canvas-ai-preset-save-btn:hover {
     filter: brightness(1.05);
 }
+
+/* ===== Sidebar Two-Zone Layout (Preset+Params / Prompt+Generate) ===== */
+.sidebar-zone-1 {
+    display: grid;
+    grid-template-columns: minmax(240px, 1fr) 220px;
+    gap: 12px;
+    align-items: start;
+    margin-bottom: 10px;
+}
+
+.sidebar-preset-section,
+.sidebar-params-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.sidebar-preset-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.sidebar-preset-controls .canvas-ai-preset-select {
+    flex: 1;
+    min-width: 120px;
+    margin: 0;
+}
+
+.canvas-ai-preset-manage-btn {
+    flex-shrink: 0;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.canvas-ai-preset-manage-btn:hover {
+    background: var(--background-modifier-hover);
+}
+
+.sidebar-params-section .canvas-ai-image-options {
+    margin-top: 0;
+}
+
+.sidebar-zone-2 {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) auto;
+    gap: 8px;
+    align-items: start;
+}
+
+.sidebar-zone-2 .canvas-ai-prompt-input {
+    margin: 0;
+    min-width: 320px;
+}
+
+.sidebar-zone-2 .canvas-ai-action-row {
+    margin: 0;
+}
+
+.sidebar-zone-2 .canvas-ai-generate-btn {
+    min-width: 110px;
+    height: 36px;
+    white-space: nowrap;
+}
+
+/* modal rows used by preset editor */
+.canvas-ai-modal-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.canvas-ai-modal-row input,
+.canvas-ai-modal-row select,
+.canvas-ai-modal-row textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+    .sidebar-zone-1 {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar-zone-2 {
+        grid-template-columns: 1fr auto;
+    }
+
+    .sidebar-zone-2 .canvas-ai-prompt-input {
+        min-width: 240px;
+    }
+}
+
+@media (max-width: 640px) {
+    .sidebar-zone-2 {
+        grid-template-columns: 1fr;
+    }
+
+    .sidebar-zone-2 .canvas-ai-prompt-input {
+        min-width: 0;
+    }
+
+    .sidebar-zone-2 .canvas-ai-generate-btn {
+        width: 100%;
+    }
+}
