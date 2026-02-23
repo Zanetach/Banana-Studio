@@ -67,7 +67,7 @@ Banana Studio is an AI image plugin for Obsidian notes, focused on one workflow:
 
 **Generate images in the sidebar -> choose a candidate -> insert into the current note**.
 
-Chat / Edit / Canvas features are no longer part of this version.
+Chat / Edit / whiteboard features are no longer part of this version.
 
 ## Features
 

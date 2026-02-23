@@ -123,7 +123,7 @@ export class AntigravityToolsProvider {
       requestBody.systemInstruction = { parts: [{ text: systemPrompt }] };
     }
 
-    console.debug("Canvas AI: [AntigravityTools] Sending chat request...");
+    console.debug("Banana Studio: [AntigravityTools] Sending chat request...");
 
     const requestParams: RequestUrlParam = {
       url: endpoint,
@@ -212,7 +212,7 @@ export class AntigravityToolsProvider {
     };
 
     console.debug(
-      `Canvas AI: [AntigravityTools] Image-to-Image via /v1/chat/completions (Model: ${model})`,
+      `Banana Studio: [AntigravityTools] Image-to-Image via /v1/chat/completions (Model: ${model})`,
     );
 
     const requestParams: RequestUrlParam = {
@@ -351,7 +351,7 @@ export class AntigravityToolsProvider {
           thinkingConfig.budgetTokens || 8192;
       }
       console.debug(
-        "Canvas AI: [AntigravityTools] Multimodal Thinking enabled:",
+        "Banana Studio: [AntigravityTools] Multimodal Thinking enabled:",
         JSON.stringify(genConfig.thinkingConfig),
       );
     }
@@ -361,7 +361,7 @@ export class AntigravityToolsProvider {
     }
 
     console.debug(
-      "Canvas AI: [AntigravityTools] Sending multimodal chat request...",
+      "Banana Studio: [AntigravityTools] Sending multimodal chat request...",
       JSON.stringify(requestBody),
     );
 
@@ -370,7 +370,7 @@ export class AntigravityToolsProvider {
     }
 
     console.debug(
-      "Canvas AI: [AntigravityTools] Sending multimodal chat request...",
+      "Banana Studio: [AntigravityTools] Sending multimodal chat request...",
     );
 
     const requestParams: RequestUrlParam = {
@@ -384,7 +384,7 @@ export class AntigravityToolsProvider {
       const response = await requestUrl(requestParams);
       const data = response.json as GeminiResponse;
       console.debug(
-        "Canvas AI: [AntigravityTools] Raw Response:",
+        "Banana Studio: [AntigravityTools] Raw Response:",
         JSON.stringify(data),
       );
       return this.extractTextAndThinkingFromResponse(data);
@@ -432,7 +432,7 @@ export class AntigravityToolsProvider {
     )?.thoughtSignature;
 
     console.debug(
-      `Canvas AI: [AntigravityTools] Received response (thinking: ${thinking.length > 0 ? "yes" : "no"}, signature: ${thoughtSignature ? "yes" : "no"})`,
+      `Banana Studio: [AntigravityTools] Received response (thinking: ${thinking.length > 0 ? "yes" : "no"}, signature: ${thoughtSignature ? "yes" : "no"})`,
     );
 
     return {
@@ -472,7 +472,7 @@ export class AntigravityToolsProvider {
       const base64Data = window.btoa(binary);
 
       console.debug(
-        "Canvas AI: Fetched image, mimeType:",
+        "Banana Studio: Fetched image, mimeType:",
         mimeType,
         "size:",
         arrayBuffer.byteLength,
@@ -490,7 +490,7 @@ export class AntigravityToolsProvider {
         (errorBody as Record<string, Record<string, string>>).error?.message ||
         error.message;
       console.error(
-        "Canvas AI: AntigravityTools HTTP Error",
+        "Banana Studio: AntigravityTools HTTP Error",
         error.status,
         errorBody,
       );
@@ -548,7 +548,7 @@ export class AntigravityToolsProvider {
           thinkingConfig.budgetTokens || 8192;
       }
       console.debug(
-        "Canvas AI: [AntigravityTools] Thinking enabled:",
+        "Banana Studio: [AntigravityTools] Thinking enabled:",
         JSON.stringify(genConfig.thinkingConfig),
       );
     }
@@ -558,7 +558,7 @@ export class AntigravityToolsProvider {
     }
 
     console.debug(
-      "Canvas AI: [AntigravityTools] Sending stream chat request...",
+      "Banana Studio: [AntigravityTools] Sending stream chat request...",
     );
 
     try {
@@ -608,7 +608,7 @@ export class AntigravityToolsProvider {
                   for (const part of parts) {
                     // Debug: 输出完整 part
                     console.debug(
-                      "Canvas AI: [AntigravityTools] Stream part:",
+                      "Banana Studio: [AntigravityTools] Stream part:",
                       JSON.stringify(part),
                     );
                     if (part.text) {
@@ -635,7 +635,7 @@ export class AntigravityToolsProvider {
         }
       }
     } catch (error) {
-      console.error("Canvas AI: AntigravityTools Stream Error", error);
+      console.error("Banana Studio: AntigravityTools Stream Error", error);
       throw error;
     }
   }

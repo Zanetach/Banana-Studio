@@ -1,5 +1,5 @@
 /**
- * UI Modals for Canvas AI Plugin
+ * UI Modals for Banana Studio
  * InputModal, ConfirmModal, DiffModal
  */
 

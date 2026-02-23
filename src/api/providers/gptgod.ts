@@ -59,7 +59,7 @@ export class GptGodProvider {
             temperature: temperature
         };
 
-        console.debug('Canvas AI: [GPTGod] Sending chat request...');
+        console.debug('Banana Studio: [GPTGod] Sending chat request...');
         const response = await this.sendRequest(requestBody);
 
         if (response.error) {
@@ -131,7 +131,7 @@ export class GptGodProvider {
             messages: messages,
         };
 
-        console.debug(`Canvas AI: [GPTGod] Sending image request (Model: ${model})...`);
+        console.debug(`Banana Studio: [GPTGod] Sending image request (Model: ${model})...`);
         const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
         const response = await this.sendRequest(requestBody, timeoutMs);
 
@@ -169,7 +169,7 @@ export class GptGodProvider {
             temperature: temperature
         };
 
-        console.debug('Canvas AI: [GPTGod] Sending multimodal chat request...');
+        console.debug('Banana Studio: [GPTGod] Sending multimodal chat request...');
         const response = await this.sendRequest(requestBody);
 
         if (response.error) {
@@ -214,7 +214,7 @@ export class GptGodProvider {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'https://obsidian.md',
-                'X-Title': 'Obsidian Canvas AI'
+                'X-Title': 'Banana Studio'
             },
             body: JSON.stringify(body)
         };
@@ -280,7 +280,7 @@ export class GptGodProvider {
         const ensureDataUrl = async (url: string): Promise<string> => {
             if (url.startsWith('data:')) return url;
             if (url.startsWith('http://') || url.startsWith('https://')) {
-                console.debug('Canvas AI: [GPTGod] Fetching image from URL:', url);
+                console.debug('Banana Studio: [GPTGod] Fetching image from URL:', url);
                 return await this.fetchImageAsDataUrl(url);
             }
             if (url.match(/^[A-Za-z0-9+/=]+$/)) {
@@ -388,7 +388,7 @@ export class GptGodProvider {
         };
 
         const apiKey = this.getApiKey();
-        console.debug('Canvas AI: [GPTGod] Sending stream chat request...');
+        console.debug('Banana Studio: [GPTGod] Sending stream chat request...');
 
         try {
             const response = await globalThis.fetch(this.getChatEndpoint(), {
@@ -397,7 +397,7 @@ export class GptGodProvider {
                     'Authorization': `Bearer ${apiKey}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://obsidian.md',
-                    'X-Title': 'Obsidian Canvas AI'
+                    'X-Title': 'Banana Studio'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -438,7 +438,7 @@ export class GptGodProvider {
                             
                             // Debug: 输出完整 delta
                             if (delta) {
-                                console.debug('Canvas AI: [GPTGod] Stream delta:', JSON.stringify(delta));
+                                console.debug('Banana Studio: [GPTGod] Stream delta:', JSON.stringify(delta));
                                 
                                 // Handle reasoning_content (DeepSeek R1 等)
                                 if (delta.reasoning_content) {
@@ -482,7 +482,7 @@ export class GptGodProvider {
                 }
             }
         } catch (error) {
-            console.error('Canvas AI: Stream Error', error);
+            console.error('Banana Studio: Stream Error', error);
             throw error;
         }
     }

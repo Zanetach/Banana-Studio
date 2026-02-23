@@ -1,5 +1,5 @@
 /**
- * Canvas AI Plugin Settings
+ * Banana Studio Plugin Settings
  * 设置接口、类型和默认值
  */
 

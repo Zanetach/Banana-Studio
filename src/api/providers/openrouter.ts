@@ -58,7 +58,7 @@ export class OpenRouterProvider {
             temperature: temperature
         };
 
-        console.debug('Canvas AI: [OpenRouter] Sending chat request...');
+        console.debug('Banana Studio: [OpenRouter] Sending chat request...');
         const response = await this.sendRequest(requestBody);
 
         if (response.error) {
@@ -70,7 +70,7 @@ export class OpenRouterProvider {
         }
 
         const content = response.choices[0].message.content;
-        console.debug('Canvas AI: Received response:', typeof content === 'string' ? content.substring(0, 100) : 'multimodal content');
+        console.debug('Banana Studio: Received response:', typeof content === 'string' ? content.substring(0, 100) : 'multimodal content');
 
         return typeof content === 'string' ? content : content.map(p => p.text || '').join('');
     }
@@ -95,7 +95,7 @@ export class OpenRouterProvider {
         };
 
         const apiKey = this.getApiKey();
-        console.debug('Canvas AI: [OpenRouter] Sending stream chat request...');
+        console.debug('Banana Studio: [OpenRouter] Sending stream chat request...');
 
         try {
             const response = await globalThis.fetch(this.getChatEndpoint(), {
@@ -104,7 +104,7 @@ export class OpenRouterProvider {
                     'Authorization': `Bearer ${apiKey}`,
                     'Content-Type': 'application/json',
                     'HTTP-Referer': 'https://obsidian.md',
-                    'X-Title': 'Obsidian Canvas AI'
+                    'X-Title': 'Banana Studio'
                 },
                 body: JSON.stringify(requestBody)
             });
@@ -145,7 +145,7 @@ export class OpenRouterProvider {
                             
                             // Debug: 输出完整 delta
                             if (delta) {
-                                console.debug('Canvas AI: [OpenRouter] Stream delta:', JSON.stringify(delta));
+                                console.debug('Banana Studio: [OpenRouter] Stream delta:', JSON.stringify(delta));
                                 
                                 // 处理 reasoning_content (DeepSeek R1 等)
                                 if (delta.reasoning_content) {
@@ -184,7 +184,7 @@ export class OpenRouterProvider {
                 }
             }
         } catch (error) {
-            console.error('Canvas AI: Stream Error', error);
+            console.error('Banana Studio: Stream Error', error);
             throw error;
         }
     }
@@ -243,7 +243,7 @@ export class OpenRouterProvider {
             }
         }
 
-        console.debug('Canvas AI: [OpenRouter] Sending image generation request...');
+        console.debug('Banana Studio: [OpenRouter] Sending image generation request...');
 
         const timeoutMs = (this.settings.imageGenerationTimeout || 120) * 1000;
         const response = await this.sendRequest(requestBody, timeoutMs);
@@ -261,7 +261,7 @@ export class OpenRouterProvider {
         if (message.images && message.images.length > 0) {
             const firstImage = message.images[0];
             const imageUrl = typeof firstImage === 'string' ? firstImage : firstImage.image_url.url;
-            console.debug('Canvas AI: Received image, length:', imageUrl.length);
+            console.debug('Banana Studio: Received image, length:', imageUrl.length);
             return imageUrl;
         }
 
@@ -304,7 +304,7 @@ export class OpenRouterProvider {
             temperature: temperature
         };
 
-        console.debug('Canvas AI: [OpenRouter] Sending multimodal chat request...');
+        console.debug('Banana Studio: [OpenRouter] Sending multimodal chat request...');
         const response = await this.sendRequest(requestBody);
 
         if (response.error) {
@@ -349,7 +349,7 @@ export class OpenRouterProvider {
                 'Authorization': `Bearer ${apiKey}`,
                 'Content-Type': 'application/json',
                 'HTTP-Referer': 'https://obsidian.md',
-                'X-Title': 'Obsidian Canvas AI'
+                'X-Title': 'Banana Studio'
             },
             body: JSON.stringify(body)
         };
@@ -357,7 +357,7 @@ export class OpenRouterProvider {
         try {
             let response;
             if (timeoutMs) {
-                console.debug(`Canvas AI: Request timeout set to ${timeoutMs / 1000}s`);
+                console.debug(`Banana Studio: Request timeout set to ${timeoutMs / 1000}s`);
                 response = await requestUrlWithTimeout(requestParams, timeoutMs);
             } else {
                 response = await requestUrl(requestParams);
@@ -372,7 +372,7 @@ export class OpenRouterProvider {
             if (isHttpError(error)) {
                 const errorBody = error.json || { message: error.message };
                 const errorMessage = (errorBody as Record<string, Record<string, string>>).error?.message || error.message;
-                console.error('Canvas AI: HTTP Error', error.status, errorBody);
+                console.error('Banana Studio: HTTP Error', error.status, errorBody);
                 throw new Error(`HTTP ${error.status}: ${errorMessage}`);
             }
             throw error;

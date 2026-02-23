@@ -26,6 +26,8 @@ export class SideBarCoPilotView extends ItemView {
   private resolutionSelect: HTMLSelectElement;
   private aspectRatioSelect: HTMLSelectElement;
   private presetSelect: HTMLSelectElement;
+  private presetNameInput: HTMLInputElement;
+  private savePresetBtn: HTMLButtonElement;
 
   private imagePresets: PromptPreset[] = [];
   private quickSwitchImageModels: QuickSwitchModel[] = [];
@@ -113,8 +115,23 @@ export class SideBarCoPilotView extends ItemView {
     const footer = container.createDiv("canvas-ai-palette-footer");
 
     const presetRow = footer.createDiv("canvas-ai-preset-row");
+    presetRow.createEl("label", { text: "预设" });
+
     this.presetSelect = presetRow.createEl("select", {
       cls: "canvas-ai-preset-select",
+    });
+
+    this.presetNameInput = presetRow.createEl("input", {
+      cls: "canvas-ai-preset-name-input",
+      attr: {
+        type: "text",
+        placeholder: "输入预设名",
+      },
+    });
+
+    this.savePresetBtn = presetRow.createEl("button", {
+      cls: "canvas-ai-preset-save-btn",
+      text: "保存",
     });
 
     const optionsRow = footer.createDiv("canvas-ai-image-options");
@@ -150,7 +167,7 @@ export class SideBarCoPilotView extends ItemView {
     const actionRow = footer.createDiv("canvas-ai-action-row");
     this.generateBtn = actionRow.createEl("button", {
       cls: "canvas-ai-generate-btn",
-      text: t("Generate"),
+      text: "Generate",
     });
 
     this.setupEvents();
@@ -171,8 +188,13 @@ export class SideBarCoPilotView extends ItemView {
       const selected = this.imagePresets.find((p) => p.id === selectedId);
       if (selected) {
         this.inputEl.value = selected.prompt || "";
+        this.presetNameInput.value = selected.name || "";
         this.updateGenerateButtonState();
       }
+    });
+
+    this.savePresetBtn.addEventListener("click", () => {
+      void this.saveCurrentPreset();
     });
 
     this.imageModelSelect.addEventListener("change", () => {
@@ -221,12 +243,12 @@ export class SideBarCoPilotView extends ItemView {
     this.updateGenerateButtonState();
   }
 
-  private rebuildPresetSelect(): void {
+  private rebuildPresetSelect(selectedId: string = ""): void {
     this.presetSelect.empty();
 
     this.presetSelect.createEl("option", {
       value: "",
-      text: "Choose Preset",
+      text: "预设",
     });
 
     this.imagePresets.forEach((preset) => {
@@ -235,6 +257,10 @@ export class SideBarCoPilotView extends ItemView {
         text: preset.name,
       });
     });
+
+    if (selectedId) {
+      this.presetSelect.value = selectedId;
+    }
   }
 
   private rebuildImageModelSelect(): void {
@@ -273,12 +299,11 @@ export class SideBarCoPilotView extends ItemView {
     if (!this.generateBtn) return;
 
     if (this.pendingTaskCount === 0) {
-      this.generateBtn.textContent = t("Generate");
+      this.generateBtn.textContent = "Generate";
       this.generateBtn.removeClass("generating");
     } else {
-      this.generateBtn.textContent = `${t("Generating")} ${
-        this.pendingTaskCount
-      } ${t("Tasks")}`;
+      this.generateBtn.textContent =
+        "Generating " + this.pendingTaskCount + " Tasks";
       this.generateBtn.addClass("generating");
     }
 
@@ -310,6 +335,49 @@ export class SideBarCoPilotView extends ItemView {
     if (notesHandler) {
       notesHandler.clearHighlightForSidebar();
     }
+  }
+
+  private async saveCurrentPreset(): Promise<void> {
+    const name = this.presetNameInput.value.trim();
+    const prompt = this.inputEl.value.trim();
+
+    if (!name) {
+      new Notice("请输入预设名称");
+      return;
+    }
+
+    if (!prompt) {
+      new Notice("请输入 Prompt 内容");
+      return;
+    }
+
+    const existing = this.imagePresets.find((p) => p.name === name);
+    let selectedId = "";
+
+    if (existing) {
+      existing.prompt = prompt;
+      selectedId = existing.id;
+    } else {
+      const created: PromptPreset = {
+        id: this.generatePresetId(),
+        name,
+        prompt,
+      };
+      this.imagePresets.push(created);
+      selectedId = created.id;
+    }
+
+    this.plugin.settings.imagePresets = [...this.imagePresets];
+    await this.plugin.saveSettings();
+    this.rebuildPresetSelect(selectedId);
+
+    new Notice("预设已保存");
+  }
+
+  private generatePresetId(): string {
+    return `${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 10)}`;
   }
 
   private async handleGenerate(): Promise<void> {

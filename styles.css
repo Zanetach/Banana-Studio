@@ -1473,3 +1473,29 @@
         content: "...";
     }
 }
+
+.canvas-ai-preset-name-input {
+    min-width: 120px;
+    max-width: 160px;
+    padding: 6px 8px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: 12px;
+}
+
+.canvas-ai-preset-save-btn {
+    height: 30px;
+    padding: 0 10px;
+    border: 1px solid var(--background-modifier-border);
+    border-radius: 6px;
+    background: var(--interactive-accent);
+    color: var(--text-on-accent);
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.canvas-ai-preset-save-btn:hover {
+    filter: brightness(1.05);
+}

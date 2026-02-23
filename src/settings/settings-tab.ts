@@ -1,5 +1,5 @@
 /**
- * Canvas AI Settings Tab
+ * Banana Studio Settings Tab
  * 插件设置界面
  */
 
@@ -49,7 +49,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
       this.modelsFetched = true;
       const source = isGemini ? "Gemini" : "AntigravityTools";
       console.debug(
-        `Canvas Banana Settings: Loaded ${this.modelCache.length} hardcoded ${source} models`,
+        `Banana Studio Settings: Loaded ${this.modelCache.length} hardcoded ${source} models`,
       );
       void this.display();
       return;
@@ -62,7 +62,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
         : this.plugin.settings.openRouterApiKey;
 
     if (!apiKey) {
-      console.debug("Canvas Banana Settings: No API key, skipping model fetch");
+      console.debug("Banana Studio Settings: No API key, skipping model fetch");
       return;
     }
 
@@ -105,11 +105,11 @@ export class CanvasAISettingTab extends PluginSettingTab {
 
       this.modelsFetched = true;
       console.debug(
-        `Canvas Banana Settings: Fetched ${this.modelCache.length} models from ${isYunwu ? "Yunwu" : "OpenRouter"}`,
+        `Banana Studio Settings: Fetched ${this.modelCache.length} models from ${isYunwu ? "Yunwu" : "OpenRouter"}`,
       );
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      console.error("Canvas Banana Settings: Failed to fetch models:", message);
+      console.error("Banana Studio Settings: Failed to fetch models:", message);
       // Keep existing cache or empty
       new Notice(`Failed to fetch model list: ${message}`);
     } finally {
