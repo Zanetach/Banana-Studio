@@ -134,7 +134,7 @@ npm run lint
 
 ### License
 
-GPL-3.0，见 [LICENSE](LICENSE)
+MIT，见 [LICENSE](LICENSE)
 
 ---
 
@@ -254,4 +254,4 @@ Core files:
 
 ### License
 
-GPL-3.0, see [LICENSE](LICENSE)
+MIT, see [LICENSE](LICENSE)

@@ -18,7 +18,7 @@
         "gemini"
     ],
     "author": "Zane",
-    "license": "GPL-3.0",
+    "license": "MIT",
     "devDependencies": {
         "@eslint/eslintrc": "^3.3.3",
         "@types/node": "^16.11.6",
