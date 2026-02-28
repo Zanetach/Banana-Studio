@@ -257,13 +257,6 @@ export class NotesSelectionHandler {
       imageOptions,
       localApiManager,
       file,
-      (base64, f) =>
-        saveImageToVault(
-          this.app.vault,
-          base64,
-          f,
-          this.plugin.settings.imageSaveFolder,
-        ),
     );
 
     return candidate;
@@ -289,17 +282,37 @@ export class NotesSelectionHandler {
     }
 
     const targetFile = activeFile;
-    const normalizedImagePath = candidate.filePath.replace(/^\/+/, "");
-    const imageAbstract =
-      this.app.vault.getAbstractFileByPath(normalizedImagePath);
-    if (!(imageAbstract instanceof TFile)) {
-      new Notice(
-        this.tr(
-          `找不到图片文件：${normalizedImagePath}`,
-          `Image file not found: ${normalizedImagePath}`,
-        ),
+    let imageAbstract: TFile | null = null;
+    const normalizedImagePath = (candidate.filePath || "").replace(/^\/+/, "");
+    if (normalizedImagePath) {
+      const existing = this.app.vault.getAbstractFileByPath(normalizedImagePath);
+      if (existing instanceof TFile) {
+        imageAbstract = existing;
+      }
+    }
+    if (!imageAbstract) {
+      if (!candidate.imageDataUrl) {
+        new Notice(
+          this.tr("候选图数据缺失，无法插入", "Candidate image data missing"),
+        );
+        return false;
+      }
+      const saved = await saveImageToVault(
+        this.app.vault,
+        candidate.imageDataUrl,
+        targetFile,
+        this.plugin.settings.imageSaveFolder,
       );
-      return false;
+      candidate.fileName = saved.fileName;
+      candidate.filePath = saved.filePath;
+      const created = this.app.vault.getAbstractFileByPath(saved.filePath);
+      if (!(created instanceof TFile)) {
+        new Notice(
+          this.tr("图片保存失败，无法插入", "Failed to save image before inserting"),
+        );
+        return false;
+      }
+      imageAbstract = created;
     }
 
     const linkText = this.app.metadataCache.fileToLinktext(

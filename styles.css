@@ -436,6 +436,29 @@
     min-width: 200px;
 }
 
+.canvas-ai-settings .canvas-ai-secret-input {
+    min-width: 220px;
+}
+
+.canvas-ai-settings .canvas-ai-secret-toggle {
+    margin-left: 6px;
+    padding: 4px;
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--color-red);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+}
+
+.canvas-ai-settings .canvas-ai-secret-toggle:hover {
+    background: var(--background-modifier-hover);
+}
+
 /* Fix System Prompt textarea width changing on resize */
 .canvas-ai-settings textarea {
     resize: vertical;
@@ -2328,16 +2351,79 @@
 
 .sidebar-reference-preview-modal {
     max-width: min(90vw, 980px);
+    position: relative;
+    padding: 8px 10px 10px;
+    background: var(--background-primary);
+    border-radius: 12px;
+}
+
+.sidebar-reference-preview-modal h3 {
+    margin: 0 34px 8px 0;
+    min-height: 24px;
+    line-height: 24px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.sidebar-reference-preview-modal .modal-close-button {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    z-index: 10;
+    opacity: 0.75;
+}
+
+.sidebar-reference-preview-modal .modal-close-button:hover {
+    opacity: 1;
 }
 
 .sidebar-reference-preview-modal-image {
     display: block;
-    width: auto;
-    max-width: min(90vw, 920px);
-    max-height: min(80vh, 720px);
+    width: 100%;
+    max-width: min(92vw, 940px);
+    max-height: min(82vh, 760px);
     object-fit: contain;
-    border-radius: 10px;
+    border-radius: 8px;
     border: 1px solid var(--background-modifier-border);
+    background: color-mix(
+        in srgb,
+        var(--background-secondary) 86%,
+        #000 14%
+    );
+}
+
+.sidebar-reference-preview-actions {
+    margin-top: 10px;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.sidebar-reference-preview-actions button {
+    width: 100%;
+    min-height: 34px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.sidebar-reference-preview-actions button:not(.mod-cta) {
+    background: var(--background-secondary);
+    color: var(--text-muted);
+    border: 1px solid var(--background-modifier-border);
+}
+
+.sidebar-reference-preview-actions button:not(.mod-cta):hover {
+    background: var(--background-modifier-hover);
+    color: var(--text-normal);
+}
+
+.sidebar-reference-preview-actions .mod-cta {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 
 @media (max-width: 900px) {

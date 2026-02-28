@@ -35,17 +35,13 @@ interface InputImage {
   role: string;
 }
 
-export interface SavedImageInfo {
-  fileName: string;
-  filePath: string;
-}
-
 export interface GeneratedImageCandidate {
   taskId: string;
   fileName: string;
   filePath: string;
   notePath: string;
   createdAt: number;
+  imageDataUrl: string;
 }
 
 export class NoteImageTaskManager {
@@ -107,7 +103,6 @@ export class NoteImageTaskManager {
     imageOptions: ImageOptions,
     apiManager: ApiManager,
     file: TFile,
-    onSaveImage: (base64: string, file: TFile) => Promise<SavedImageInfo>,
   ): Promise<GeneratedImageCandidate> {
     // 检查是否可以启动
     if (!this.canStartImageTask()) {
@@ -156,16 +151,17 @@ export class NoteImageTaskManager {
         );
       }
 
-      const savedImage = await onSaveImage(result, file);
       activeTask.status = "completed";
 
       new Notice(t("Image generated"));
+      const generatedAt = Date.now();
       return {
         taskId: taskNum,
-        fileName: savedImage.fileName,
-        filePath: savedImage.filePath,
+        fileName: `ai-generated-${generatedAt}.png`,
+        filePath: "",
         notePath: file.path,
-        createdAt: Date.now(),
+        createdAt: generatedAt,
+        imageDataUrl: result,
       };
     } catch (e) {
       clearTimeout(task.timeoutId);

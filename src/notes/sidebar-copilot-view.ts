@@ -83,11 +83,28 @@ const bi = (zh: string, en: string): string => (isZhLocale() ? zh : en);
 class ReferenceImagePreviewModal extends Modal {
   private readonly imageUrl: string;
   private readonly fileName: string;
+  private readonly actions?: {
+    downloadText: string;
+    insertText: string;
+    onDownload: () => void;
+    onInsert: () => void;
+  };
 
-  constructor(app: App, imageUrl: string, fileName: string) {
+  constructor(
+    app: App,
+    imageUrl: string,
+    fileName: string,
+    actions?: {
+      downloadText: string;
+      insertText: string;
+      onDownload: () => void;
+      onInsert: () => void;
+    },
+  ) {
     super(app);
     this.imageUrl = imageUrl;
     this.fileName = fileName;
+    this.actions = actions;
   }
 
   onOpen(): void {
@@ -104,6 +121,26 @@ class ReferenceImagePreviewModal extends Modal {
         alt: this.fileName || bi("参考图预览", "Reference Preview"),
       },
     });
+
+    if (this.actions) {
+      const actionsEl = contentEl.createDiv("sidebar-reference-preview-actions");
+      actionsEl
+        .createEl("button", {
+          text: this.actions.downloadText,
+        })
+        .addEventListener("click", () => {
+          this.actions?.onDownload();
+        });
+      actionsEl
+        .createEl("button", {
+          text: this.actions.insertText,
+          cls: "mod-cta",
+        })
+        .addEventListener("click", () => {
+          this.actions?.onInsert();
+          this.close();
+        });
+    }
   }
 
   onClose(): void {
@@ -2443,6 +2480,7 @@ export class SideBarCoPilotView extends ItemView {
         this.app.workspace.getActiveFile()?.path ||
         "",
       createdAt: Date.now(),
+      imageDataUrl: "",
       status: "pending" as const,
       sessionId,
       sequence: task.sequence || i + 1,
@@ -3150,10 +3188,9 @@ export class SideBarCoPilotView extends ItemView {
   }
 
   private renderCandidateListInternal(fromScroll: boolean): void {
-    this.candidateListEl.empty();
-
     if (this.imageCandidates.length === 0) {
       this.candidateViewportKey = "";
+      this.candidateListEl.empty();
       this.candidateListEl.createDiv({
         cls: "sidebar-image-candidate-empty",
         text: this.tr("暂无图片", "No images yet"),
@@ -3180,6 +3217,7 @@ export class SideBarCoPilotView extends ItemView {
       return;
     }
     this.candidateViewportKey = viewportKey;
+    this.candidateListEl.empty();
 
     const topPad = Math.max(0, startRow * rowHeight);
     const bottomPad = Math.max(0, (totalRows - endRow) * rowHeight);
@@ -3209,7 +3247,7 @@ export class SideBarCoPilotView extends ItemView {
     candidate: SidebarImageCandidate,
   ): void {
     const card = parent.createDiv("sidebar-image-candidate-card");
-    const previewSrc = this.getCandidatePreviewSrc(candidate.filePath);
+    const previewSrc = this.getCandidatePreviewSrc(candidate);
     const preview = card.createDiv("sidebar-image-candidate-preview");
 
     const statusText =
@@ -3260,12 +3298,7 @@ export class SideBarCoPilotView extends ItemView {
         card.toggleClass("is-actions-visible", true);
       });
       preview.addEventListener("dblclick", () => {
-        const modal = new ReferenceImagePreviewModal(
-          this.app,
-          previewSrc,
-          candidate.fileName,
-        );
-        modal.open();
+        this.openCandidatePreviewModal(candidate, previewSrc);
       });
     } else {
       preview.createDiv({
@@ -3280,10 +3313,11 @@ export class SideBarCoPilotView extends ItemView {
     const canOperateCompletedCandidate =
       (candidate.status === "ready" || candidate.status === "inserted") &&
       !this.isBulkInserting;
+    const canCopyEmbed = canOperateCompletedCandidate && !!candidate.filePath;
     insertBtn.disabled = !canInsertSingle;
     regenerateBtn.disabled = !canOperateCompletedCandidate;
     discardBtn.disabled = !canOperateCompletedCandidate;
-    copyPathBtn.disabled = !canOperateCompletedCandidate;
+    copyPathBtn.disabled = !canCopyEmbed;
 
     const markVisible = (): void => card.addClass("is-actions-visible");
     [insertBtn, regenerateBtn, discardBtn, copyPathBtn].forEach((btn) => {
@@ -3305,6 +3339,40 @@ export class SideBarCoPilotView extends ItemView {
     copyPathBtn.addEventListener("click", () => {
       void this.handleCopyCandidateEmbed(candidate.taskId);
     });
+  }
+
+  private openCandidatePreviewModal(
+    candidate: SidebarImageCandidate,
+    previewSrc: string,
+  ): void {
+    const modal = new ReferenceImagePreviewModal(this.app, previewSrc, candidate.fileName, {
+      downloadText: this.tr("下载图片到本地", "Download Image"),
+      insertText: this.tr("插入到笔记", "Insert into Note"),
+      onDownload: () => this.downloadCandidateImage(candidate, previewSrc),
+      onInsert: () => {
+        void this.handleInsertCandidate(candidate.taskId);
+      },
+    });
+    modal.open();
+  }
+
+  private downloadCandidateImage(
+    candidate: SidebarImageCandidate,
+    previewSrc: string,
+  ): void {
+    try {
+      const link = document.createElement("a");
+      link.href = previewSrc;
+      link.download = candidate.fileName || `ai-generated-${Date.now()}.png`;
+      link.rel = "noopener";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      new Notice(this.tr("已开始下载图片", "Image download started"));
+    } catch (error) {
+      console.error("Sidebar CoPilot: failed to download candidate image", error);
+      new Notice(this.tr("下载失败，请重试", "Download failed. Please retry."));
+    }
   }
 
   private async handleInsertAllCandidates(): Promise<void> {
@@ -3457,6 +3525,7 @@ export class SideBarCoPilotView extends ItemView {
       fileName: this.tr("生成中...", "Generating..."),
       filePath: "",
       createdAt: Date.now(),
+      imageDataUrl: "",
       status: "pending",
       sessionId,
       sequence,
@@ -3558,7 +3627,11 @@ export class SideBarCoPilotView extends ItemView {
     }
   }
 
-  private getCandidatePreviewSrc(filePath: string): string | null {
+  private getCandidatePreviewSrc(candidate: SidebarImageCandidate): string | null {
+    if (candidate.imageDataUrl) {
+      return candidate.imageDataUrl;
+    }
+    const filePath = candidate.filePath || "";
     if (!filePath) return null;
     try {
       const normalized = filePath.replace(/^\/+/, "");

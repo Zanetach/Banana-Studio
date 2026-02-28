@@ -3,7 +3,14 @@
  * 插件设置界面
  */
 
-import { App, PluginSettingTab, Setting, requestUrl, Notice } from "obsidian";
+import {
+  App,
+  PluginSettingTab,
+  Setting,
+  requestUrl,
+  Notice,
+  setIcon,
+} from "obsidian";
 import type CanvasAIPlugin from "../../main";
 import { ApiProvider, CanvasAISettings, QuickSwitchModel } from "./settings";
 import { t } from "../../lang/helpers";
@@ -166,8 +173,13 @@ export class CanvasAISettingTab extends PluginSettingTab {
       },
       // Gemini 3 series (Image generation)
       {
+        id: "gemini-3.1-flash-image-preview",
+        name: "Nano Banana 2 (Gemini 3.1 Flash Image)",
+        outputModalities: ["image"],
+      },
+      {
         id: "gemini-3-pro-image-preview",
-        name: "Gemini 3 Pro Image Preview",
+        name: "Nano Banana Pro (Gemini 3 Pro Image)",
         outputModalities: ["image"],
       },
       // Legacy naming (for backward compatibility)
@@ -214,8 +226,13 @@ export class CanvasAISettingTab extends PluginSettingTab {
         outputModalities: ["text", "image"],
       },
       {
+        id: "google/gemini-3.1-flash-image-preview",
+        name: "Nano Banana 2 (Gemini 3.1 Flash Image) (ZenMux)",
+        outputModalities: ["image"],
+      },
+      {
         id: "google/gemini-3-pro-image-preview",
-        name: "Gemini 3 Pro Image Preview (ZenMux)",
+        name: "Nano Banana Pro (Gemini 3 Pro Image) (ZenMux)",
         outputModalities: ["image"],
       },
     ];
@@ -397,12 +414,9 @@ export class CanvasAISettingTab extends PluginSettingTab {
       if (!isGemini && !m.outputModalities.includes("image")) return false;
 
       // Must be Gemini family and image-capable:
-      // - standard image models include "image"
-      // - Gemini 3.1 Pro Preview is also allowed as image-capable by request
-      if (
-        !idLower.includes("gemini") ||
-        (!idLower.includes("image") && !idLower.includes("3.1-pro-preview"))
-      ) {
+      // - only dedicated image models are shown in image dropdown
+      // - do not show generic text/multimodal preview models here
+      if (!idLower.includes("gemini") || !idLower.includes("image")) {
         return false;
       }
 
@@ -492,6 +506,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
+      this.attachSecretToggle(apiKeySetting);
 
       this.addTestButton(apiKeySetting.controlEl, containerEl);
 
@@ -520,6 +535,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
+      this.attachSecretToggle(openaiKeySetting);
 
       this.addTestButton(openaiKeySetting.controlEl, containerEl);
 
@@ -548,6 +564,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
+      this.attachSecretToggle(zenmuxKeySetting);
 
       this.addTestButton(zenmuxKeySetting.controlEl, containerEl);
 
@@ -577,6 +594,7 @@ export class CanvasAISettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             }),
         );
+      this.attachSecretToggle(geminiKeySetting);
 
       this.addTestButton(geminiKeySetting.controlEl, containerEl);
 
@@ -846,13 +864,13 @@ export class CanvasAISettingTab extends PluginSettingTab {
           if (!apiManager.isConfigured()) {
             throw new Error("Please enter API Key first");
           }
-          const response = await apiManager.chatCompletion(
+          await apiManager.chatCompletion(
             'Say "Connection successful!" in one line.',
           );
 
           testBtn.textContent = t("Success");
           testBtn.addClass("success");
-          testResultEl.textContent = `✓ ${t("Connection successful")}: ${response.substring(0, 50)}...`;
+          testResultEl.textContent = `✓ ${t("Connection successful")}`;
           testResultEl.removeClass("error");
           testResultEl.addClass("success");
           testResultEl.removeClass("is-hidden");
@@ -879,6 +897,41 @@ export class CanvasAISettingTab extends PluginSettingTab {
           }, 3000);
         }
       })();
+    });
+  }
+
+  /**
+   * Convert plain text input to secret input with red eye toggle.
+   * Default is masked; click eye to reveal plain text.
+   */
+  private attachSecretToggle(setting: Setting): void {
+    const inputEl = setting.controlEl.querySelector("input");
+    if (!inputEl) return;
+
+    inputEl.type = "password";
+    inputEl.autocomplete = "off";
+    inputEl.spellcheck = false;
+    inputEl.addClass("canvas-ai-secret-input");
+
+    const toggleBtn = setting.controlEl.createEl("button", {
+      cls: "canvas-ai-secret-toggle",
+      attr: { type: "button", "aria-label": "Toggle secret visibility" },
+    });
+
+    const syncIcon = () => {
+      const isMasked = inputEl.type === "password";
+      setIcon(toggleBtn, isMasked ? "eye" : "eye-off");
+      toggleBtn.setAttr("title", isMasked ? "Show key" : "Hide key");
+    };
+
+    syncIcon();
+
+    toggleBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      inputEl.type = inputEl.type === "password" ? "text" : "password";
+      syncIcon();
+      inputEl.focus();
     });
   }
 

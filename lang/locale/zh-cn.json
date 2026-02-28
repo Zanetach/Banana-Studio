@@ -35,7 +35,7 @@
   "Testing...": "正在测试...",
   "Success": "成功",
   "Failed": "失败",
-  "Connection successful": "连接成功",
+  "Connection successful": "测试连接成功",
   "Connection failed": "连接失败",
   "Manually enter model name": "手动输入模型名称",
   "Enable manual model": "启用以手动输入模型 ID",
